@@ -7,8 +7,9 @@ import pano from "../../public/art/pano/manifest.json";
 import type { MissionId } from "./missions";
 
 export const PANO = { w: pano.w, h: pano.h, tile: pano.tile, tiles: pano.tiles } as const;
-export const tileSrc = (i: number) => `/art/pano/${i}.webp`;
-export const PREVIEW_SRC = "/art/pano/preview.webp";
+// ?v= 는 그림이 바뀔 때마다 달라진다(만들 때 계산) → 폰에 남은 예전 타일과 섞이지 않는다
+export const tileSrc = (i: number) => `/art/pano/${i}.webp?v=${pano.v}`;
+export const PREVIEW_SRC = `/art/pano/preview.webp?v=${pano.v}`;
 /** 미리보기는 원본의 1/8 크기 */
 export const PREVIEW_SCALE = 8;
 

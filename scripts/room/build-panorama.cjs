@@ -21,6 +21,7 @@ const { chromium } = require("playwright-core");
 const http = require("http");
 const fs = require("fs");
 const path = require("path");
+const crypto = require("crypto");
 
 const VIDEO = path.resolve(process.argv[2] || "video2.mp4");
 const PIECES = (process.argv[3] || "8.8-8.09,1.7-4.98,7.95-5.7").split(",").map((p) => {
@@ -373,9 +374,13 @@ function shiftBetween(a, b, maxS, margin, minOverlap = 0) {
   });
   const pv = Buffer.from(result.preview.split(",")[1], "base64");
   fs.writeFileSync(path.join(OUT, "preview.webp"), pv);
+  // 그림이 바뀌면 주소도 바뀌게(?v=) — 폰에 남아 있는 예전 타일이 섞이지 않도록
+  const hash = crypto.createHash("sha1");
+  for (const u of [...result.tiles, result.preview]) hash.update(u);
+  const v = hash.digest("hex").slice(0, 8);
   fs.writeFileSync(
     path.join(OUT, "manifest.json"),
-    JSON.stringify({ w: result.W, h: result.H, tile: OPT.tile, tiles: result.tiles.length, seams: result.seams.map(Math.round) }, null, 1),
+    JSON.stringify({ w: result.W, h: result.H, tile: OPT.tile, tiles: result.tiles.length, v, seams: result.seams.map(Math.round) }, null, 1),
   );
   const debugDir = process.env.DEBUG_OUT;
   if (debugDir) fs.writeFileSync(path.join(debugDir, "pano-full.jpg"), Buffer.from(result.full.split(",")[1], "base64"));
