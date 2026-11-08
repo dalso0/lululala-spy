@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useEffect, useState, type CSSProperties } from "react";
 import { CommsTicker } from "@/components/CommsFeed";
 import { SoundToggle } from "@/components/fx/SoundToggle";
-import { HQScene, playIgnitionHums } from "@/components/hq/HQScene";
+import { RoomScene } from "@/components/hq/RoomScene";
 import { PixelCeremony } from "@/components/hq/PixelCeremony";
 import { MissionList } from "@/components/MissionList";
 import { useGame } from "@/hooks/useLive";
@@ -13,11 +13,10 @@ import { useSpy } from "@/hooks/useSpy";
 import { asset } from "@/lib/asset";
 import { isFirebaseConfigured } from "@/lib/firebase";
 import { feel } from "@/lib/fx";
-import { ENDING_SPOTS, SPOTS } from "@/lib/hq";
 import { progressOf, todayKST, type Progress } from "@/lib/missions";
 import type { SpyDoc } from "@/lib/store";
 
-/** 상황판: 2.5D 본부(미션마다 불이 들어온다) → 픽셀 장착 의식 → 미션 목록 */
+/** 상황판: 360° 본부(미션마다 불이 들어온다) → 픽셀 장착 의식 → 미션 목록 */
 export default function Dashboard() {
   const { status, spy } = useSpy();
 
@@ -85,33 +84,30 @@ function DashboardBody({ spy, endingOpen }: { spy: SpyDoc; endingOpen: boolean }
   const progress = progressOf(installed);
   // 연구소가 열리면 늘곰이 남은 회색을 모두 걷어 낸다
   const ratio = endingOpen ? 1 : progress.ratio;
-  const litCount = endingOpen
-    ? SPOTS.length + ENDING_SPOTS.length
-    : SPOTS.filter((s) => s.mission && installed.includes(s.mission)).length;
 
   // 장착까지 마친 상태를 기억 (다음엔 새로 깬 것만 의식)
   useEffect(() => {
     if (!ceremony) writeLocal(SEEN_KEY, { cleared: spy.clearedMissions });
   }, [ceremony, spy.clearedMissions]);
 
-  const powerOn = (lights: number) => {
+  // 불이 켜질 때 나는 지직 소리는 본부 장면이 불마다 낸다
+  const powerOn = () => {
     setPowered(true);
     setJustPowered(true);
     try {
       sessionStorage.setItem(POWER_KEY, "1");
     } catch {}
     feel("power", "thunk");
-    playIgnitionHums(lights + 1, 0.35, 0.18);
     setTimeout(() => setJustPowered(false), 3200);
   };
 
+  // 장착이 끝나면: 그 미션의 물건이 있는 벽으로 돌아가 불을 켠다
   const finishCeremony = () => {
     const done = queue;
     setQueue([]);
     setIgniting(done);
-    if (!powered) powerOn(litCount + done.length);
-    else playIgnitionHums(done.length, 0.3, 0.22);
-    setTimeout(() => setIgniting([]), 2600);
+    if (!powered) powerOn();
+    setTimeout(() => setIgniting([]), 4000);
   };
 
   const dismissEnding = () => {
@@ -138,14 +134,14 @@ function DashboardBody({ spy, endingOpen }: { spy: SpyDoc; endingOpen: boolean }
         </div>
       </header>
 
-      {/* 중앙: 2.5D 본부 — 미션을 깰 때마다 그 물건에 불이 들어온다 */}
-      <HQScene
+      {/* 중앙: 360° 본부 — 옆으로 밀어 둘러보고, 미션을 깰 때마다 그 물건에 불이 들어온다 */}
+      <RoomScene
         cleared={spy.clearedMissions}
         pending={queue}
         igniting={igniting}
         justPowered={justPowered}
         powered={powered}
-        onPowerOn={() => powerOn(litCount)}
+        onPowerOn={powerOn}
         endingOpen={endingOpen}
         ratio={ratio}
         today={today}
@@ -153,7 +149,7 @@ function DashboardBody({ spy, endingOpen }: { spy: SpyDoc; endingOpen: boolean }
 
       <section aria-label="본부 복구 상태" className="-mt-1 flex flex-col gap-2">
         <div className="flex items-center justify-between font-mono text-[11px] text-fog">
-          <span>{powered ? "색채 복구율 · 물건을 눌러 들여다보세요" : "본부를 터치해 전원을 켜세요"}</span>
+          <span>{powered ? "옆으로 밀어 둘러보고, 물건을 눌러 들여다보세요" : "본부를 터치해 전원을 켜세요"}</span>
           <span style={{ color: "var(--accent)" }}>{Math.round(ratio * 100)}%</span>
         </div>
         <div className="h-1 overflow-hidden rounded-full bg-line">

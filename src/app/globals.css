@@ -153,6 +153,15 @@ body {
   0%, 100% { transform: translate(-50%, -50%) scale(0.9); opacity: 0.35; }
   50% { transform: translate(-50%, -50%) scale(1.15); opacity: 0.9; }
 }
+@keyframes hq-touch-static {
+  0%, 100% { transform: scale(0.9); opacity: 0.35; }
+  50% { transform: scale(1.15); opacity: 0.9; }
+}
+@keyframes hq-bubble {
+  0% { transform: translateY(0) scale(0.6); opacity: 0; }
+  20% { opacity: 0.9; }
+  100% { transform: translateY(-260%) scale(1); opacity: 0; }
+}
 @media (prefers-reduced-motion: reduce) {
   .hq-anim {
     animation: none !important;
