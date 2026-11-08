@@ -1,25 +1,19 @@
-// 360° 늘곰 본부: 본부를 한 바퀴 도는 영상(video.mp4)에서 뽑은 프레임으로 만든 '둘러보기'.
-// 프레임은 영상 한가운데를 세로로 잘라 낸 576×648 (회전 중엔 절반 크기 lo/, 벽 앞에 멈추면 선명한 것).
-//
-// 영상은 AI가 만든 것이라 방이 정확히 한 바퀴로 이어지지 않는다: 앞 절반(0~18)은 오른쪽으로 돌고,
-// 철문 뒤에서 장면이 끊긴 뒤 뒤 절반(19~35)은 반대로 돈다. 그래서 뒤 절반을 거꾸로 이어 붙여
-// '왼쪽으로 밀면 늘 화면이 왼쪽으로 흐르는' 고리를 만들고, 끊기는 두 곳은 어둡게 디졸브한다.
+// 360° 늘곰 본부: 본부를 한 바퀴 도는 영상(video.mp4)을 이어 붙인 파노라마 한 장(public/art/pano).
+// 파노라마는 scripts/room/build-panorama.cjs 가 만든다. 영상을 바꾸면 그 스크립트를 다시 돌리고,
+// 물건 위치가 달라졌으면 아래 좌표만 고치면 된다.
+// 좌표는 높이 648px 파노라마(720p 영상) 기준 px. 같은 영상을 더 큰 해상도로 다시 만들면 비율대로 커진다.
 
+import pano from "../../public/art/pano/manifest.json";
 import type { MissionId } from "./missions";
 
-export const ROOM = { w: 576, h: 648 } as const;
+export const PANO = { w: pano.w, h: pano.h, tile: pano.tile, tiles: pano.tiles } as const;
+export const tileSrc = (i: number) => `/art/pano/${i}.webp`;
+export const PREVIEW_SRC = "/art/pano/preview.webp";
+/** 미리보기는 원본의 1/8 크기 */
+export const PREVIEW_SCALE = 8;
 
-const range = (a: number, b: number) => (a <= b ? Array.from({ length: b - a + 1 }, (_, i) => a + i) : Array.from({ length: a - b + 1 }, (_, i) => a - i));
-
-/** 보는 순서대로 늘어놓은 영상 프레임 번호 (왼쪽으로 밀면 다음) */
-export const SEQUENCE: number[] = [...range(0, 18), ...range(31, 20)];
-
-/** SEQUENCE[i] 와 SEQUENCE[i+1] 사이에서 장면이 끊긴다 (마지막 → 처음 포함) */
-export const CUT_AFTER = new Set<number>([18, SEQUENCE.length - 1]);
-
-const pad = (n: number) => String(n).padStart(2, "0");
-export const loSrc = (frame: number) => `/art/room/lo/${pad(frame)}.webp`;
-export const hiSrc = (frame: number) => `/art/room/${pad(frame)}.webp`;
+/** 좌표 기준 높이 → 지금 파노라마 높이 */
+const K = PANO.h / 648;
 
 export type Rgb = readonly [number, number, number];
 export type SpotFx = "heartbeat" | "cone" | "rings" | "rays" | "pulse" | "neon" | "screen" | "bubbles";
@@ -31,7 +25,6 @@ export type Spot = {
   /** exit: 엔딩 문 / map: 부스 안내 지도 */
   kind?: "exit" | "map";
   label: string;
-  /** 프레임(576×648) 안 좌표 */
   x: number;
   y: number;
   r: number;
@@ -39,89 +32,76 @@ export type Spot = {
   fx?: SpotFx;
 };
 
-export type Station = {
-  id: string;
-  name: string;
-  /** 영상 프레임 번호 */
-  frame: number;
-  spots: Spot[];
-  /** 처음부터 켜져 있는 작은 등 */
-  lamps?: { x: number; y: number; r: number }[];
-};
-
-const WARM: Rgb = [255, 196, 120];
-
-export const STATIONS: Station[] = [
-  {
-    id: "desk",
-    name: "작전 책상",
-    frame: 1,
-    lamps: [{ x: 40, y: 112, r: 52 }],
-    spots: [
-      { id: "notes", mission: "m0_daily", label: "평범지령 메모", x: 445, y: 108, r: 118, glow: [255, 236, 200] },
-      { id: "scope", mission: "m1_breathing", label: "심박 모니터", x: 58, y: 326, r: 74, glow: [90, 255, 160], fx: "heartbeat" },
-      { id: "lamp", mission: "m2_mirror", label: "진실의 스탠드", x: 276, y: 306, r: 84, glow: [255, 168, 80], fx: "cone" },
-    ],
-  },
-  {
-    id: "gears",
-    name: "톱니 벽",
-    frame: 6,
-    spots: [{ id: "gears", mission: "m3_offline_f", label: "톱니 장치", x: 300, y: 300, r: 122, glow: [255, 205, 130], fx: "pulse" }],
-  },
-  {
-    id: "panel",
-    name: "제어판",
-    frame: 12,
-    lamps: [{ x: 56, y: 246, r: 58 }],
-    spots: [
-      { id: "monitor", mission: "m3_offline_e", label: "감시 모니터", x: 350, y: 252, r: 88, glow: [120, 230, 255], fx: "screen" },
-      { id: "switches", mission: "m3_offline_stone", label: "봉인 스위치", x: 275, y: 548, r: 96, glow: [255, 70, 220], fx: "pulse" },
-    ],
-  },
-  {
-    id: "door",
-    name: "탈출 문",
-    frame: 16,
-    lamps: [{ x: 290, y: 36, r: 46 }],
-    spots: [{ id: "door", kind: "exit", label: "탈출 문", x: 275, y: 380, r: 195, glow: [255, 0, 255], fx: "neon" }],
-  },
-  {
-    id: "window",
-    name: "창문",
-    frame: 30,
-    lamps: [{ x: 446, y: 150, r: 56 }],
-    spots: [
-      { id: "window", mission: "m3_offline_walk", label: "지하 창문", x: 170, y: 200, r: 138, glow: [130, 235, 255], fx: "rays" },
-      { id: "radio", mission: "m3_offline_bowl", label: "주파수 라디오", x: 420, y: 548, r: 82, glow: [255, 188, 90], fx: "rings" },
-    ],
-  },
-  {
-    id: "map",
-    name: "작전 지도",
-    frame: 23,
-    lamps: [{ x: 300, y: 92, r: 60 }],
-    spots: [{ id: "map", kind: "map", label: "작전 지도", x: 235, y: 290, r: 205, glow: WARM }],
-  },
-  {
-    id: "lab",
-    name: "해독 선반",
-    frame: 20,
-    spots: [{ id: "flasks", mission: "m3_offline_tea", label: "해독제 선반", x: 265, y: 335, r: 138, glow: [140, 255, 180], fx: "bubbles" }],
-  },
+const RAW_SPOTS: Spot[] = [
+  { id: "scope", mission: "m1_breathing", label: "심박 모니터", x: 213, y: 318, r: 88, glow: [90, 255, 160], fx: "heartbeat" },
+  { id: "lamp", mission: "m2_mirror", label: "진실의 스탠드", x: 466, y: 300, r: 95, glow: [255, 168, 80], fx: "cone" },
+  { id: "notes", mission: "m0_daily", label: "평범지령 메모", x: 690, y: 112, r: 165, glow: [255, 236, 200] },
+  { id: "gears", mission: "m3_offline_f", label: "톱니 장치", x: 1258, y: 302, r: 150, glow: [255, 205, 130], fx: "pulse" },
+  { id: "switches", mission: "m3_offline_stone", label: "봉인 스위치", x: 2243, y: 545, r: 140, glow: [255, 70, 220], fx: "pulse" },
+  { id: "monitors", mission: "m3_offline_e", label: "감시 모니터", x: 2455, y: 270, r: 172, glow: [120, 230, 255], fx: "screen" },
+  { id: "door", kind: "exit", label: "탈출 문", x: 2892, y: 370, r: 230, glow: [255, 0, 255], fx: "neon" },
+  { id: "window", mission: "m3_offline_walk", label: "지하 창문", x: 3712, y: 195, r: 165, glow: [130, 235, 255], fx: "rays" },
+  { id: "radio", mission: "m3_offline_bowl", label: "주파수 라디오", x: 3933, y: 545, r: 105, glow: [255, 188, 90], fx: "rings" },
+  { id: "map", kind: "map", label: "작전 지도", x: 4860, y: 288, r: 260, glow: [255, 220, 170] },
+  { id: "flasks", mission: "m3_offline_tea", label: "해독제 선반", x: 5400, y: 330, r: 165, glow: [140, 255, 180], fx: "bubbles" },
 ];
+export const SPOTS: Spot[] = RAW_SPOTS.map((s) => ({ ...s, x: s.x * K, y: s.y * K, r: s.r * K }));
 
-/** 각 벽의 고리 위 위치 (SEQUENCE 안 번호) */
-export const stationPos = (s: Station) => SEQUENCE.indexOf(s.frame);
+/** 처음부터 켜져 있는 작은 등 (본부가 완전히 죽어 있지는 않다는 느낌) */
+export const LAMPS = [
+  { x: 234, y: 113, r: 58 },
+  { x: 2021, y: 234, r: 64 },
+  { x: 2895, y: 40, r: 60 },
+  { x: 3961, y: 156, r: 64 },
+  { x: 4884, y: 96, r: 72 },
+].map((l) => ({ x: l.x * K, y: l.y * K, r: l.r * K }));
 
-/** 미션 → 그 물건이 있는 벽 */
-export const stationOfMission = (id: string) => STATIONS.findIndex((s) => s.spots.some((p) => p.mission === id));
-
-/** 심박 모니터 화면 영역 (책상 프레임 안) */
-export const SCOPE_SCREEN = { x: 2, y: 298, w: 50, h: 48 } as const;
-
-/** 프레임 px → 백분율 */
-export const px = {
-  x: (v: number) => (v / ROOM.w) * 100,
-  y: (v: number) => (v / ROOM.h) * 100,
+/** 심박 모니터 화면 (파노라마 px) */
+export const SCOPE_SCREEN = { x: 184 * K, y: 284 * K, w: 58 * K, h: 60 * K };
+/** 스탠드 불빛 원뿔: 갓 아래 두 점 → 책상 위 두 점 */
+export const LAMP_CONE = {
+  top: [440 * K, 505 * K] as const,
+  topY: 338 * K,
+  bottom: [345 * K, 640 * K] as const,
+  bottomY: 565 * K,
 };
+
+/** 화살표·나침반이 멈춰 서는 곳 */
+export const STOPS = [
+  { name: "작전 책상", x: 470 },
+  { name: "톱니 벽", x: 1258 },
+  { name: "제어판", x: 2350 },
+  { name: "탈출 문", x: 2892 },
+  { name: "창문", x: 3820 },
+  { name: "작전 지도", x: 4860 },
+  { name: "해독 선반", x: 5400 },
+].map((s) => ({ name: s.name, x: s.x * K }));
+
+/** 지금 보고 있는 곳 이름 */
+const REGIONS = [
+  { from: 120, name: "작전 책상" },
+  { from: 900, name: "톱니 벽" },
+  { from: 1560, name: "제어판" },
+  { from: 2700, name: "탈출 문" },
+  { from: 3100, name: "증기 배관" },
+  { from: 3500, name: "창문" },
+  { from: 4080, name: "책장" },
+  { from: 4560, name: "작전 지도" },
+  { from: 5180, name: "해독 선반" },
+].map((r) => ({ from: r.from * K, name: r.name }));
+
+export const wrap = (x: number) => ((x % PANO.w) + PANO.w) % PANO.w;
+/** a 에서 b 까지 고리를 따라 가장 짧게 가는 거리 (−w/2 ~ w/2) */
+export const wrapDelta = (d: number) => {
+  const m = wrap(d + PANO.w / 2) - PANO.w / 2;
+  return m;
+};
+
+export function regionAt(x: number) {
+  const p = wrap(x);
+  let name = REGIONS[REGIONS.length - 1].name; // 처음 120px 은 해독 선반 옆 문
+  for (const r of REGIONS) if (p >= r.from) name = r.name;
+  return name;
+}
+
+export const spotOfMission = (id: string) => SPOTS.find((s) => s.mission === id);

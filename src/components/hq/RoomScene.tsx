@@ -4,35 +4,41 @@ import {
   animate,
   AnimatePresence,
   motion,
+  motionValue,
   useMotionValue,
   useMotionValueEvent,
+  useTransform,
   type AnimationPlaybackControls,
+  type MotionValue,
 } from "framer-motion";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { asset } from "@/lib/asset";
 import { feel, haptic, play } from "@/lib/fx";
 import { getMission, lockState, MISSIONS, SENSE_NAMES } from "@/lib/missions";
 import {
-  CUT_AFTER,
-  hiSrc,
-  loSrc,
-  px,
-  ROOM,
+  LAMP_CONE,
+  LAMPS,
+  PANO,
+  PREVIEW_SCALE,
+  PREVIEW_SRC,
+  regionAt,
   SCOPE_SCREEN,
-  SEQUENCE,
-  STATIONS,
-  stationOfMission,
-  stationPos,
+  SPOTS,
+  STOPS,
+  spotOfMission,
+  tileSrc,
+  wrap,
+  wrapDelta,
+  type Rgb,
   type Spot,
-  type Station,
 } from "@/lib/room";
 
 type Props = {
   cleared: readonly string[];
   /** 픽셀 장착을 기다리는 미션: 아직 불을 켜지 않는다 */
   pending: readonly string[];
-  /** 막 장착을 마친 미션: 그 벽으로 돌아가 깜빡이며 켜진다 */
+  /** 막 장착을 마친 미션: 그쪽으로 돌아가 깜빡이며 켜진다 */
   igniting: readonly string[];
   /** 지금 막 전원이 들어왔다 */
   justPowered: boolean;
@@ -44,146 +50,287 @@ type Props = {
   today: string;
 };
 
-const N = SEQUENCE.length;
-const mod = (a: number, n: number) => ((a % n) + n) % n;
-const STATION_KEY = "spy-room-station";
+const PAN_KEY = "spy-room-pan";
+const LAMP_GLOW: Rgb = [255, 196, 120];
+/** 물건을 들여다볼 때 다가가는 정도 */
+const ZOOM_IN = 1.45;
+const EASE = [0.3, 0, 0.2, 1] as const;
 
-function readStation() {
+function readPan() {
   try {
-    const v = Number(sessionStorage.getItem(STATION_KEY));
-    return Number.isInteger(v) && v >= 0 && v < STATIONS.length ? v : 0;
+    const raw = sessionStorage.getItem(PAN_KEY);
+    const v = Number(raw);
+    return raw !== null && Number.isFinite(v) ? v : STOPS[0].x;
   } catch {
-    return 0;
+    return STOPS[0].x;
   }
 }
 
-/** 고리 위 현재 위치에서 dir 방향(+1 다음 / −1 이전)으로 가장 가까운 벽 */
-function nextStationFrom(pos: number, dir: 1 | -1) {
-  let best = { idx: 0, at: 0, d: Infinity };
-  STATIONS.forEach((s, idx) => {
-    const base = stationPos(s);
-    for (let k = -2; k <= 2; k++) {
-      const at = base + Math.round(pos / N) * N + k * N;
-      const d = (at - pos) * dir;
-      if (d > 0.35 && d < best.d) best = { idx, at, d };
-    }
-  });
-  return best;
-}
+const reducedMotion = () => typeof window !== "undefined" && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+/** 돌아가는 시간(초): 멀수록 조금 길게 */
+const glideSec = (dist: number) => (reducedMotion() ? 0 : Math.min(1.1, 0.35 + Math.abs(dist) / (PANO.h * 3.4)));
 
-function nearestStation(pos: number) {
-  let best = { idx: 0, at: 0, d: Infinity };
-  STATIONS.forEach((s, idx) => {
-    const base = stationPos(s);
-    for (let k = -2; k <= 2; k++) {
-      const at = base + Math.round(pos / N) * N + k * N;
-      const d = Math.abs(at - pos);
-      if (d < best.d) best = { idx, at, d };
+// 불이 깜빡이며 켜지는 밝기 곡선 (0.95초)
+const FLICKER_MS = 950;
+const FLICKER_T = [0, 0.08, 0.18, 0.32, 0.46, 1];
+const FLICKER_V = [0, 1, 0.12, 0.85, 0.3, 1];
+function flicker(ms: number) {
+  if (ms <= 0) return 0;
+  const t = ms / FLICKER_MS;
+  if (t >= 1) return 1;
+  for (let i = 1; i < FLICKER_T.length; i++) {
+    if (t <= FLICKER_T[i]) {
+      const k = (t - FLICKER_T[i - 1]) / (FLICKER_T[i] - FLICKER_T[i - 1]);
+      return FLICKER_V[i - 1] + (FLICKER_V[i] - FLICKER_V[i - 1]) * k;
     }
-  });
-  return best;
-}
-
-/** 프레임 i 가 아직 안 왔으면 가장 가까운, 이미 받은 프레임 */
-function pick(imgs: (HTMLImageElement | null)[], i: number) {
-  if (imgs[i]) return imgs[i];
-  for (let d = 1; d < N; d++) {
-    const a = imgs[mod(i - d, N)] ?? imgs[mod(i + d, N)];
-    if (a) return a;
   }
-  return null;
+  return 1;
+}
+
+/** 파노라마 x 구간 [left, left+width) 를 덮는 타일 번호들 (고리 따라) */
+function tilesFor(left: number, width: number) {
+  const out = new Set<number>();
+  for (let x = left; x < left + width; x += PANO.tile / 2) out.add(Math.min(PANO.tiles - 1, Math.floor(wrap(x) / PANO.tile)));
+  out.add(Math.min(PANO.tiles - 1, Math.floor(wrap(left + width - 1) / PANO.tile)));
+  return [...out];
+}
+
+/** t 근처(radius 안)에 멈춤 자리가 있으면 그리로 붙인다 */
+function snapNear(t: number, radius: number) {
+  let best = t;
+  let bestD = radius;
+  for (const st of STOPS) {
+    const d = wrapDelta(st.x - t);
+    if (Math.abs(d) < bestD) {
+      bestD = Math.abs(d);
+      best = t + d;
+    }
+  }
+  return best;
 }
 
 /**
- * 360° 늘곰 본부 (2.5D):
- *  - 손가락으로 옆으로 밀면 영상 프레임을 넘기며 방이 돈다 → 놓으면 가장 가까운 벽 앞에 철컥 멈춘다
- *  - 멈춘 벽에서는 선명한 그림 + 미션마다 불이 들어오는 물건 + 눌러서 들여다보기
+ * 360° 늘곰 본부 (2.5D 파노라마):
+ *  - 본부를 한 바퀴 이어 붙인 파노라마를 손가락과 1:1로 민다 → 놓으면 관성으로 미끄러지다 물건 앞에서 살짝 붙는다
+ *  - 캔버스 두 장: 바닥(회색 안개 필터) + 불빛(깬 미션 물건만 원래 색으로, 깜빡이며 켜짐)
+ *  - 들여다보기(확대)도 캔버스가 원본에서 바로 다시 그려서 흐려지지 않는다
+ *  - 물건 위의 단추·효과(심박선·불빛 원뿔·음파…)는 같은 계산으로 함께 움직인다
  */
 export function RoomScene(props: Props) {
   const { cleared, pending, igniting, justPowered, powered, onPowerOn, endingOpen, ratio, today } = props;
-  const [stationIdx, setStationIdx] = useState(readStation);
-  const [atRest, setAtRest] = useState(true);
-  const [inspect, setInspect] = useState<Spot | null>(null);
-  const [origin, setOrigin] = useState("50% 50%");
-  const [denied, setDenied] = useState<string | null>(null);
-  const station = STATIONS[stationIdx];
 
-  const p = useMotionValue(stationPos(STATIONS[stationIdx]));
   const boxRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const imgs = useRef<(HTMLImageElement | null)[]>(Array(N).fill(null));
-  const anim = useRef<AnimationPlaybackControls | null>(null);
-  const drag = useRef<{ x: number; y: number; p0: number; moved: boolean; samples: { t: number; p: number }[] } | null>(null);
-  const lastFloor = useRef(Math.floor(p.get()));
-  const lastTick = useRef(0);
+  const baseRef = useRef<HTMLCanvasElement>(null);
+  const lightRef = useRef<HTMLCanvasElement>(null);
+  /** 화면 가운데의 파노라마 x (고리라서 끝없이 커지거나 작아져도 된다) */
+  const pan = useMotionValue(0);
+  /** 들여다볼 때 1 → ZOOM_IN */
+  const zoom = useMotionValue(1);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  const [region, setRegion] = useState<string>(STOPS[0].name);
+  const [inspect, setInspect] = useState<Spot | null>(null);
+  /** 들여다보는 높이 (파노라마 px) */
+  const [focusY, setFocusY] = useState(PANO.h / 2);
+  const [denied, setDenied] = useState<string | null>(null);
+  /** 물건 효과(심박선·원뿔…)의 밝기: 캔버스 불빛과 함께 깜빡인다 */
+  const [fxAlpha] = useState(() => new Map(SPOTS.map((sp) => [sp.id, motionValue(1)])));
 
-  const draw = (pos: number) => {
-    const c = canvasRef.current;
-    const g = c?.getContext("2d");
-    if (!c || !g) return;
-    const base = Math.floor(pos);
-    const t = pos - base;
-    const i0 = mod(base, N);
-    const a = pick(imgs.current, i0);
-    const b = pick(imgs.current, mod(base + 1, N));
-    g.globalAlpha = 1;
-    if (a) g.drawImage(a, 0, 0, c.width, c.height);
-    if (b && t > 0.002) {
-      g.globalAlpha = t;
-      g.drawImage(b, 0, 0, c.width, c.height);
-      g.globalAlpha = 1;
-    }
-    // 장면이 끊기는 곳: 고개를 홱 돌리듯 어둡게
-    if (CUT_AFTER.has(i0) && t > 0) {
-      g.fillStyle = `rgba(0,0,0,${0.8 * Math.sin(Math.PI * t)})`;
-      g.fillRect(0, 0, c.width, c.height);
+  const tiles = useRef<(HTMLImageElement | null)[]>(Array(PANO.tiles).fill(null));
+  const preview = useRef<HTMLImageElement | null>(null);
+  const cache = useRef(new Map<string, HTMLCanvasElement>());
+  const igniteAt = useRef(new Map<string, number>());
+  const anim = useRef<AnimationPlaybackControls | null>(null);
+  const zoomAnim = useRef<AnimationPlaybackControls | null>(null);
+  const glideTarget = useRef<number | null>(null);
+  const drag = useRef<{ id: number; x: number; y: number; pan0: number; moved: boolean; samples: { t: number; v: number }[] } | null>(null);
+  const justDragged = useRef(0);
+  const raf = useRef(0);
+  const prevPan = useRef(0);
+  const focusRef = useRef(PANO.h / 2);
+
+  const s = size.h ? size.h / PANO.h : 0; // 화면 px / 파노라마 px
+  const viewW = s ? size.w / s : 0; // 화면에 보이는 파노라마 폭
+
+  const isLit = (sp: Spot) =>
+    endingOpen || (sp.kind === undefined && !!sp.mission && cleared.includes(sp.mission) && !pending.includes(sp.mission));
+  const lit = SPOTS.filter(isLit);
+  const live = useRef({ lit, powered });
+  useLayoutEffect(() => {
+    live.current = { lit, powered };
+  });
+
+  /* ───────── 그리기 ───────── */
+
+  const renderRef = useRef<() => void>(() => {});
+  /** 다음 프레임에 한 번 다시 그리기 */
+  const loop = () => {
+    if (raf.current) return;
+    raf.current = requestAnimationFrame(() => {
+      raf.current = 0;
+      renderRef.current();
+    });
+  };
+
+  /** 파노라마 [left, left+width) × [top, top+height) 를 g 의 (0,0)부터 scale 배로 그린다 (고리 따라) */
+  const blit = (g: CanvasRenderingContext2D, left: number, width: number, top: number, height: number, scale: number) => {
+    const sy = Math.max(0, top);
+    const ey = Math.min(PANO.h, top + height);
+    if (ey <= sy) return;
+    const dy = (sy - top) * scale;
+    const dh = (ey - sy) * scale;
+    let x = left;
+    const end = left + width;
+    for (let guard = 0; x < end - 0.01 && guard < 24; guard++) {
+      const local = wrap(x);
+      const ti = Math.min(PANO.tiles - 1, Math.floor(local / PANO.tile));
+      const t0 = ti * PANO.tile;
+      const t1 = Math.min(t0 + PANO.tile, PANO.w);
+      const w = Math.min(t1 - local, end - x);
+      const dx = (x - left) * scale;
+      const img = tiles.current[ti];
+      if (img) g.drawImage(img, local - t0, sy, w, ey - sy, dx, dy, w * scale + 0.6, dh);
+      else if (preview.current) {
+        const k = PREVIEW_SCALE;
+        g.drawImage(preview.current, local / k, sy / k, w / k, (ey - sy) / k, dx, dy, w * scale + 0.6, dh);
+      }
+      x += w;
     }
   };
 
-  // 회전 중: 프레임 그리기 + 톱니 딸깍 소리
-  useMotionValueEvent(p, "change", (v) => {
-    draw(v);
-    const f = Math.floor(v);
-    if (f === lastFloor.current) return;
-    const crossed = Math.min(f, lastFloor.current);
-    lastFloor.current = f;
-    if (CUT_AFTER.has(mod(crossed, N))) play("focus");
+  /** 불빛용: 물건 자리를 원래 색으로 오려 가장자리를 부드럽게 (한 번 만들어 두고 재사용) */
+  const ensureCache = (key: string, x: number, y: number, r: number) => {
+    if (cache.current.has(key)) return;
+    if (!tilesFor(x - r, 2 * r).every((i) => tiles.current[i])) return;
+    const d = Math.ceil(r * 2);
+    const c = document.createElement("canvas");
+    c.width = d;
+    c.height = d;
+    const g = c.getContext("2d");
+    if (!g) return;
+    blit(g, x - r, 2 * r, y - r, 2 * r, 1);
+    g.globalCompositeOperation = "destination-in";
+    const grad = g.createRadialGradient(r, r, 0, r, r, r);
+    grad.addColorStop(0, "#000");
+    grad.addColorStop(0.38, "#000");
+    grad.addColorStop(1, "rgba(0,0,0,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, d, d);
+    cache.current.set(key, c);
+  };
+
+  const render = () => {
+    const base = baseRef.current;
+    const light = lightRef.current;
+    if (!base || !light || !base.width || !base.height) return;
+    const vw = base.width;
+    const vh = base.height;
+    const z = zoom.get();
+    const k = (vh / PANO.h) * z; // 기기 px / 파노라마 px
+    const center = pan.get();
+    const left = center - vw / k / 2;
+    const top = focusRef.current * (1 - 1 / z);
+
+    const g = base.getContext("2d");
+    if (!g) return;
+    g.imageSmoothingEnabled = true;
+    g.imageSmoothingQuality = "high";
+    g.clearRect(0, 0, vw, vh);
+    blit(g, left, vw / k, top, PANO.h / z, k);
+
+    const lg = light.getContext("2d");
+    if (!lg) return;
+    lg.clearRect(0, 0, vw, vh);
+    const { lit: litNow, powered: on } = live.current;
+    if (!on) return;
+    lg.imageSmoothingEnabled = true;
+    lg.imageSmoothingQuality = "high";
     const now = performance.now();
-    if (now - lastTick.current > 45) {
-      play("tick", { volume: 0.35 });
-      lastTick.current = now;
-    }
+    let animating = false;
+    const drawLight = (key: string, x: number, y: number, r: number, glow: Rgb, strength = 1) => {
+      let a = strength;
+      const t0 = igniteAt.current.get(key);
+      if (t0 !== undefined) {
+        const e = now - t0;
+        a = strength * flicker(e);
+        if (e < FLICKER_MS) animating = true;
+        else igniteAt.current.delete(key);
+      }
+      fxAlpha.get(key)?.set(a / strength);
+      const cx = vw / 2 + wrapDelta(x - center) * k;
+      const cy = (y - top) * k;
+      const rr = r * k;
+      if (a <= 0.001 || cx + rr * 1.4 < 0 || cx - rr * 1.4 > vw) return;
+      const c = cache.current.get(key);
+      lg.globalAlpha = a;
+      if (c) lg.drawImage(c, cx - rr, cy - rr, rr * 2, rr * 2);
+      lg.globalCompositeOperation = "screen";
+      const grad = lg.createRadialGradient(cx, cy, 0, cx, cy, rr * 1.35);
+      grad.addColorStop(0, `rgba(${glow[0]},${glow[1]},${glow[2]},0.34)`);
+      grad.addColorStop(0.7, `rgba(${glow[0]},${glow[1]},${glow[2]},0)`);
+      lg.fillStyle = grad;
+      lg.fillRect(cx - rr * 1.4, cy - rr * 1.4, rr * 2.8, rr * 2.8);
+      lg.globalCompositeOperation = "source-over";
+      lg.globalAlpha = 1;
+    };
+    LAMPS.forEach((l, i) => drawLight(`lamp${i}`, l.x, l.y, l.r, LAMP_GLOW, 0.8));
+    litNow.forEach((sp) => drawLight(sp.id, sp.x, sp.y, sp.r, sp.glow));
+    if (animating) loop();
+  };
+  useLayoutEffect(() => {
+    renderRef.current = render;
   });
 
-  // 회전용 작은 프레임을 현재 벽에서 가까운 것부터 미리 받아 둔다 (+ 벽 앞 선명한 그림들)
+  /* ───────── 준비: 크기 · 처음 위치 · 타일 받기 ───────── */
+
+  useLayoutEffect(() => {
+    const el = boxRef.current;
+    if (!el) return;
+    const p0 = readPan();
+    prevPan.current = p0;
+    pan.set(p0);
+    setRegion(regionAt(p0));
+    const ro = new ResizeObserver(() => setSize({ w: el.clientWidth, h: el.clientHeight }));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [pan]);
+
+  useLayoutEffect(() => {
+    const dpr = Math.min(window.devicePixelRatio || 1, 3);
+    for (const c of [baseRef.current, lightRef.current]) {
+      if (!c) continue;
+      c.width = Math.round(size.w * dpr);
+      c.height = Math.round(size.h * dpr);
+    }
+    renderRef.current();
+  }, [size]);
+
   useEffect(() => {
     let cancelled = false;
-    const start = Math.round(p.get());
-    const order = Array.from({ length: N }, (_, k) => mod(start + (k % 2 ? (k + 1) / 2 : -k / 2), N));
-    const load = (i: number) =>
-      new Promise<void>((res) => {
-        const im = new Image();
-        im.decoding = "async";
-        im.onload = () => {
-          if (!cancelled) {
-            imgs.current[i] = im;
-            draw(p.get());
-          }
-          res();
-        };
-        im.onerror = () => res();
-        im.src = asset(loSrc(SEQUENCE[i]));
-      });
-    (async () => {
-      for (let k = 0; k < order.length; k += 6) {
-        if (cancelled) return;
-        await Promise.all(order.slice(k, k + 6).map(load));
-      }
-      STATIONS.forEach((s) => {
-        const im = new Image();
-        im.src = asset(hiSrc(s.frame));
-      });
-    })();
+    const load = (src: string, done: (im: HTMLImageElement) => void) => {
+      const im = new Image();
+      im.decoding = "async";
+      im.src = asset(src);
+      im.decode()
+        .then(() => !cancelled && done(im))
+        .catch(() => {});
+    };
+    load(PREVIEW_SRC, (im) => {
+      preview.current = im;
+      renderRef.current();
+    });
+    // 지금 보는 곳에서 가까운 타일부터
+    const here = Math.floor(wrap(pan.get()) / PANO.tile);
+    const ring = (i: number) => Math.min(Math.abs(i - here), PANO.tiles - Math.abs(i - here));
+    Array.from({ length: PANO.tiles }, (_, i) => i)
+      .sort((a, b) => ring(a) - ring(b))
+      .forEach((i) =>
+        load(tileSrc(i), (im) => {
+          tiles.current[i] = im;
+          LAMPS.forEach((l, j) => ensureCache(`lamp${j}`, l.x, l.y, l.r));
+          SPOTS.forEach((sp) => ensureCache(sp.id, sp.x, sp.y, sp.r));
+          renderRef.current();
+        }),
+      );
     return () => {
       cancelled = true;
     };
@@ -191,99 +338,183 @@ export function RoomScene(props: Props) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  /** 벽(idx) 앞으로 돌아간다. at 은 고리 위 목표 위치 */
-  const goTo = (idx: number, at: number) => {
-    anim.current?.stop();
-    setInspect(null);
-    setAtRest(false);
-    setStationIdx(idx);
-    const dist = Math.abs(at - p.get());
-    anim.current = animate(p, at, {
-      duration: Math.min(1.2, 0.2 + dist * 0.075),
-      ease: [0.45, 0, 0.25, 1],
-      onComplete: () => {
-        setAtRest(true);
-        feel("switch", "select");
-        try {
-          sessionStorage.setItem(STATION_KEY, String(idx));
-        } catch {}
-      },
+  useEffect(() => {
+    const frame = raf;
+    const a = anim;
+    const z = zoomAnim;
+    return () => {
+      cancelAnimationFrame(frame.current);
+      a.current?.stop();
+      z.current?.stop();
+    };
+  }, []);
+
+  /* ───────── 전원 · 불 켜기 (그리기 전에 정해 두려고 layout effect) ───────── */
+
+  // 전원이 들어오면: 작은 등과 켜져 있던 물건이 차례로 깜빡이며 켜진다
+  useLayoutEffect(() => {
+    if (!justPowered) return;
+    const now = performance.now();
+    LAMPS.forEach((_, i) => igniteAt.current.set(`lamp${i}`, now + 120 + i * 90));
+    const half = (viewW || 600) / 2;
+    live.current.lit.forEach((sp, i) => {
+      const at = 380 + i * 160;
+      igniteAt.current.set(sp.id, now + at);
+      if (Math.abs(wrapDelta(sp.x - pan.get())) < half + sp.r) setTimeout(() => play("hum"), at);
     });
-  };
-  const turn = (dir: 1 | -1) => {
-    if (!powered) return onPowerOn();
-    const n = nextStationFrom(p.get(), dir);
-    goTo(n.idx, n.at);
-  };
+    renderRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [justPowered]);
 
-  // 픽셀 장착을 마친 미션이 있으면 그 벽으로 돌아가 불을 켠다
-  const goToRef = useRef(goTo);
-  useEffect(() => {
-    goToRef.current = goTo;
-  });
-  useEffect(() => {
-    if (!igniting.length) return;
-    const idx = stationOfMission(igniting[0]);
-    if (idx < 0) return;
-    const base = stationPos(STATIONS[idx]);
-    const cur = p.get();
-    const at = base + Math.round((cur - base) / N) * N;
-    if (Math.abs(at - cur) > 0.01) goToRef.current(idx, at);
-  }, [igniting, p]);
-
-  /* ───── 손가락으로 돌리기 ───── */
-  const pxPerFrame = () => (boxRef.current?.clientWidth ?? 360) / 9;
-  const onPointerDown = (e: React.PointerEvent) => {
-    if (inspect || !powered) return;
+  // 픽셀 장착을 마친 미션: 그 물건 쪽으로 돌아간 뒤 깜빡이며 켠다
+  useLayoutEffect(() => {
+    const spots = igniting.map((id) => spotOfMission(id)).filter((sp): sp is Spot => !!sp);
+    if (!spots.length) return;
+    const from = pan.get();
+    const to = from + wrapDelta(spots[0].x - from);
+    const sec = glideSec(to - from);
     anim.current?.stop();
-    drag.current = { x: e.clientX, y: e.clientY, p0: p.get(), moved: false, samples: [{ t: performance.now(), p: p.get() }] };
+    glideTarget.current = to;
+    anim.current = animate(pan, to, { duration: sec, ease: EASE, onComplete: settle });
+    const now = performance.now();
+    spots.forEach((sp, i) => {
+      const at = sec * 1000 + 150 + i * 200;
+      igniteAt.current.set(sp.id, now + at);
+      setTimeout(() => play("hum"), at);
+    });
+    renderRef.current();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [igniting]);
+
+  // 전원 · 불 켜진 물건이 바뀌면 다시 그린다
+  useLayoutEffect(() => {
+    renderRef.current();
+  }, [powered, endingOpen, cleared, pending]);
+
+  // 움직일 때: 다시 그리기 · 지금 있는 곳 이름 · 물건 앞을 지나면 '딸깍'
+  useMotionValueEvent(pan, "change", (v) => {
+    render();
+    const name = regionAt(v);
+    if (name !== region) setRegion(name);
+    const p = prevPan.current;
+    prevPan.current = v;
+    for (const st of STOPS) {
+      const a = wrapDelta(st.x - p);
+      const b = wrapDelta(st.x - v);
+      if (Math.abs(a - b) > PANO.w / 2) continue;
+      if ((a > 0.5 && b <= 0.5) || (a < -0.5 && b >= -0.5)) {
+        play("tick", { volume: 0.3 });
+        haptic("tick");
+        break;
+      }
+    }
+  });
+  useMotionValueEvent(zoom, "change", () => render());
+
+  /* ───────── 둘러보기 ───────── */
+
+  function settle() {
+    glideTarget.current = null;
+    try {
+      sessionStorage.setItem(PAN_KEY, String(wrap(pan.get())));
+    } catch {}
+  }
+
+  const glide = (to: number) => {
+    anim.current?.stop();
+    glideTarget.current = to;
+    anim.current = animate(pan, to, { duration: glideSec(to - pan.get()), ease: EASE, onComplete: settle });
+  };
+
+  const zoomTo = (to: number) => {
+    zoomAnim.current?.stop();
+    zoomAnim.current = animate(zoom, to, reducedMotion() ? { duration: 0 } : { type: "spring", stiffness: 120, damping: 20 });
+  };
+
+  const onPointerDown = (e: React.PointerEvent) => {
+    if (inspect || !powered || !s) return;
+    if (e.pointerType === "mouse" && e.button !== 0) return;
+    anim.current?.stop(); // 미끄러지던 화면을 손가락으로 붙잡는다
+    glideTarget.current = null;
+    const t = performance.now();
+    drag.current = { id: e.pointerId, x: e.clientX, y: e.clientY, pan0: pan.get(), moved: false, samples: [{ t, v: pan.get() }] };
   };
   const onPointerMove = (e: React.PointerEvent) => {
     const d = drag.current;
-    if (!d) return;
+    if (!d || e.pointerId !== d.id) return;
     const dx = e.clientX - d.x;
     const dy = e.clientY - d.y;
     if (!d.moved) {
-      if (Math.abs(dx) < 8) return;
+      if (Math.abs(dx) < 6 && Math.abs(dy) < 6) return;
       if (Math.abs(dy) > Math.abs(dx)) {
-        drag.current = null; // 세로 스크롤
+        drag.current = null; // 세로로 미는 건 화면 스크롤
         return;
       }
       d.moved = true;
-      setAtRest(false);
-      setInspect(null);
-      haptic("tick");
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId);
+      } catch {}
     }
-    const v = d.p0 - dx / pxPerFrame();
-    p.set(v);
-    d.samples.push({ t: performance.now(), p: v });
-    if (d.samples.length > 6) d.samples.shift();
+    const v = d.pan0 - dx / s; // 손가락 밑의 그림이 손가락을 그대로 따라온다
+    pan.set(v);
+    const t = performance.now();
+    d.samples.push({ t, v });
+    while (d.samples.length > 2 && t - d.samples[0].t > 100) d.samples.shift();
   };
-  const onPointerEnd = () => {
+  const onPointerEnd = (e: React.PointerEvent) => {
     const d = drag.current;
+    if (!d || e.pointerId !== d.id) return;
     drag.current = null;
-    if (!d) return;
-    if (!d.moved) {
-      // 움직이지 않았는데 벽 사이에 서 있으면 가까운 벽으로
-      if (!atRest) {
-        const n = nearestStation(p.get());
-        goTo(n.idx, n.at);
-      }
-      return;
-    }
-    const a = d.samples[0];
+    if (!d.moved) return;
+    const now = performance.now();
+    justDragged.current = now;
+    // 떼기 직전 80ms 동안 움직인 빠르기 (50ms 넘게 멈췄다가 떼면 0)
     const b = d.samples[d.samples.length - 1];
-    const vel = (b.p - a.p) / Math.max(0.016, (b.t - a.t) / 1000); // 프레임/초
-    const cur = p.get();
-    let target = nearestStation(cur + vel * 0.18);
-    if (Math.abs(vel) > 5 && (target.at - cur) * Math.sign(vel) <= 0.35) {
-      target = nextStationFrom(cur, vel > 0 ? 1 : -1); // 휙 밀면 적어도 다음 벽까지
-    }
-    goTo(target.idx, target.at);
+    const a = d.samples.find((p) => b.t - p.t <= 80) ?? b;
+    const maxV = viewW * 6;
+    const vel = now - b.t < 50 && b.t - a.t > 8 ? Math.max(-maxV, Math.min(maxV, ((b.v - a.v) / (b.t - a.t)) * 1000)) : 0;
+    if (Math.abs(vel) < viewW * 0.15) return settle(); // 거의 멈춰서 뗐으면 놓은 자리 그대로
+    // 관성: 멈출 곳은 '지금 값 + 빠르기'로 정해지고 목표값은 쓰이지 않는다.
+    // 다만 지금 값과 같은 목표를 주면 framer 가 움직일 게 없다며 건너뛰므로 +1 을 준다.
+    anim.current = animate(pan, pan.get() + 1, {
+      type: "inertia",
+      velocity: vel,
+      power: 0.45,
+      timeConstant: 320,
+      restDelta: 0.3,
+      modifyTarget: (t) => snapNear(t, viewW * 0.3),
+      onComplete: settle,
+    });
   };
 
-  /* ───── 물건 들여다보기 ───── */
+  const closeInspect = () => {
+    zoomTo(1);
+    setInspect(null);
+  };
+
+  const turn = (dir: 1 | -1) => {
+    if (!powered) return onPowerOn();
+    if (inspect) closeInspect();
+    const from = glideTarget.current ?? pan.get();
+    let best = Infinity;
+    for (const st of STOPS) {
+      const d = dir > 0 ? wrap(st.x - from) : wrap(from - st.x);
+      if (d > PANO.h / 50 && d < best) best = d;
+    }
+    if (Number.isFinite(best)) glide(from + best * dir);
+  };
+
+  const glideTo = (x: number) => {
+    if (!powered) return onPowerOn();
+    if (inspect) closeInspect();
+    const cur = pan.get();
+    glide(snapNear(cur + wrapDelta(x - cur), viewW * 0.3));
+  };
+
+  /* ───────── 물건 들여다보기 ───────── */
+
   const open = (spot: Spot) => {
+    if (performance.now() - justDragged.current < 250) return; // 밀다가 놓은 손가락
     if (!powered) return onPowerOn();
     const m = spot.mission ? getMission(spot.mission) : undefined;
     const locked = spot.kind === "exit" ? !endingOpen : m ? lockState(m, cleared, today).locked && !cleared.includes(m.id) : false;
@@ -294,30 +525,30 @@ export function RoomScene(props: Props) {
     } else {
       feel("focus", "select");
     }
-    setOrigin(`${px.x(spot.x)}% ${px.y(spot.y)}%`);
+    // 그쪽으로 고개를 돌리며 다가간다
+    focusRef.current = spot.y;
+    setFocusY(spot.y);
+    const cur = pan.get();
+    glide(cur + wrapDelta(spot.x - cur));
+    zoomTo(ZOOM_IN);
     setInspect(spot);
   };
   const close = () => {
     feel("tick", "tick");
-    setInspect(null);
+    closeInspect();
   };
 
-  const isLit = (spot: Spot) =>
-    endingOpen ||
-    (spot.kind === "map" ? false : !!spot.mission && cleared.includes(spot.mission) && !pending.includes(spot.mission));
-
   const baseFilter = !powered
-    ? "grayscale(1) brightness(0.3) contrast(1.05)"
+    ? "grayscale(1) brightness(0.34) contrast(1.05)"
     : endingOpen
-      ? "grayscale(0) brightness(1) contrast(1)"
-      : `grayscale(${0.9 - 0.55 * ratio}) brightness(${0.5 + 0.22 * ratio}) contrast(1.06)`;
+      ? "none"
+      : `grayscale(${0.8 - 0.55 * ratio}) brightness(${0.74 + 0.2 * ratio}) contrast(1.06)`;
 
-  // 벽 표시점: 아직 할 미션이 있는 벽은 마젠타
-  const hasOpenMission = (s: Station) =>
-    s.spots.some((sp) => {
-      const m = sp.mission ? getMission(sp.mission) : undefined;
-      return !!m && !cleared.includes(m.id) && !lockState(m, cleared, today).locked;
-    });
+  const glintOn = (sp: Spot) => {
+    if (sp.kind === "exit") return endingOpen;
+    const m = sp.mission ? getMission(sp.mission) : undefined;
+    return !!m && !cleared.includes(m.id) && !lockState(m, cleared, today).locked;
+  };
 
   return (
     <section
@@ -326,111 +557,64 @@ export function RoomScene(props: Props) {
       onKeyDown={(e) => {
         if (e.key === "ArrowRight") turn(1);
         if (e.key === "ArrowLeft") turn(-1);
+        if (e.key === "Escape" && inspect) close();
       }}
       className="relative -mx-4 select-none outline-none"
     >
       <div
         ref={boxRef}
         className="relative overflow-hidden bg-black"
-        style={{ aspectRatio: `${ROOM.w} / ${ROOM.h}`, touchAction: "pan-y" }}
+        style={{ aspectRatio: "8 / 9", touchAction: "pan-y" }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerEnd}
         onPointerCancel={onPointerEnd}
       >
-        {/* 카메라: 들여다볼 때 그쪽으로 다가간다 */}
+        <canvas
+          ref={baseRef}
+          role="img"
+          aria-label={`늘곰 본부 · ${region}`}
+          className="absolute inset-0 h-full w-full"
+          style={{ filter: baseFilter, transition: "filter 1.2s ease" }}
+        />
+        <canvas
+          ref={lightRef}
+          aria-hidden
+          className="pointer-events-none absolute inset-0 h-full w-full"
+          style={{ filter: "saturate(1.25) brightness(1.15)" }}
+        />
+
+        {/* 물건 단추 · 효과: 캔버스와 같은 비율로 다가가고, 빛처럼 더해진다(screen) */}
         <motion.div
           className="absolute inset-0"
-          style={{ transformOrigin: origin }}
-          animate={{ scale: inspect ? 1.8 : 1 }}
-          transition={{ type: "spring", stiffness: 110, damping: 20 }}
+          style={{ scale: zoom, transformOrigin: `${size.w / 2}px ${focusY * s}px`, mixBlendMode: "screen" }}
         >
-          {/* 회전 중 프레임 */}
-          <canvas
-            ref={canvasRef}
-            width={ROOM.w / 2}
-            height={ROOM.h / 2}
-            className="absolute inset-0 h-full w-full"
-            style={{ filter: baseFilter, transition: "filter 1.2s ease" }}
-          />
-
-          {/* 벽 앞에 멈췄을 때: 선명한 그림 + 불빛 + 누를 수 있는 물건 */}
-          <motion.div
-            className="absolute inset-0"
-            animate={{ opacity: atRest ? 1 : 0 }}
-            transition={{ duration: atRest ? 0.25 : 0.06 }}
-            style={{ pointerEvents: atRest ? "auto" : "none" }}
-          >
-            {/* eslint-disable-next-line @next/next/no-img-element */}
-            <img
-              key={station.frame}
-              src={asset(hiSrc(station.frame))}
-              alt={`늘곰 본부 · ${station.name}`}
-              className="absolute inset-0 h-full w-full"
-              style={{ filter: baseFilter, transition: "filter 1.2s ease" }}
-              draggable={false}
-            />
-            {atRest && powered && (
-              <>
-                {station.lamps?.map((l, i) => (
-                  <LightPool
-                    key={`lamp-${station.id}-${i}`}
-                    src={asset(hiSrc(station.frame))}
-                    spot={{ id: `lamp${i}`, label: "", x: l.x, y: l.y, r: l.r, glow: [255, 196, 120] }}
-                    strength={0.8}
-                    ignite={justPowered}
-                    delay={0.1}
-                  />
-                ))}
-                {station.spots.filter(isLit).map((spot, i) => (
-                  <LightPool
-                    key={`${station.id}-${spot.id}`}
-                    src={asset(hiSrc(station.frame))}
-                    spot={spot}
-                    ignite={justPowered || (!!spot.mission && igniting.includes(spot.mission))}
-                    delay={0.3 + i * 0.2}
-                  />
-                ))}
-              </>
-            )}
-
-            {/* 누를 수 있는 물건 */}
-            {station.spots.map((spot, i) => {
-              const m = spot.mission ? getMission(spot.mission) : undefined;
-              const available = !!m && !cleared.includes(m.id) && !lockState(m, cleared, today).locked;
-              return (
-                <motion.button
-                  key={spot.id}
-                  type="button"
-                  data-fx="custom"
-                  aria-label={`${spot.label}${m ? ` — ${m.title}` : ""}`}
-                  onClick={() => open(spot)}
-                  animate={denied === spot.id ? { x: [0, -5, 5, -4, 4, 0] } : { x: 0 }}
-                  transition={{ duration: 0.35 }}
-                  className="absolute rounded-full outline-none focus-visible:ring-2 focus-visible:ring-magenta"
-                  style={{
-                    left: `${px.x(spot.x - spot.r * 0.72)}%`,
-                    top: `${px.y(spot.y - spot.r * 0.72)}%`,
-                    width: `${px.x(spot.r * 1.44)}%`,
-                    height: `${px.y(spot.r * 1.44)}%`,
-                  }}
-                >
-                  {powered && available && !inspect && <Glint delay={i * 0.8} />}
-                </motion.button>
-              );
-            })}
-          </motion.div>
+          {s > 0 &&
+            SPOTS.map((sp) => (
+              <SpotLayer
+                key={sp.id}
+                spot={sp}
+                pan={pan}
+                cw={size.w}
+                s={s}
+                alpha={fxAlpha.get(sp.id)!}
+                lit={powered && isLit(sp)}
+                glint={powered && !inspect && glintOn(sp)}
+                denied={denied === sp.id}
+                onOpen={open}
+                onKeyFocus={(spot) => glideTo(spot.x)}
+              />
+            ))}
         </motion.div>
 
-        {/* 노이즈 · 가장자리 그늘 · 먼지 */}
-        <div className="noise pointer-events-none absolute inset-0" style={{ opacity: endingOpen ? 0.04 : 0.3 * (1 - ratio) + 0.08 }} />
+        {/* 안개 결 · 가장자리 그늘 · 먼지 */}
+        <div className="noise pointer-events-none absolute inset-0" style={{ opacity: endingOpen ? 0.02 : 0.07 * (1 - ratio) + 0.02 }} />
         <div
           className="pointer-events-none absolute inset-0"
-          style={{ background: "radial-gradient(ellipse 78% 72% at 50% 45%, transparent 55%, rgb(0 0 0 / 0.7) 100%)" }}
+          style={{ background: "radial-gradient(ellipse 80% 75% at 50% 45%, transparent 60%, rgb(0 0 0 / 0.55) 100%)" }}
         />
         {powered && <Dust />}
 
-        {/* 들여다볼 때: 그 물건만 밝게 */}
         <AnimatePresence>
           {inspect && (
             <motion.button
@@ -440,7 +624,7 @@ export function RoomScene(props: Props) {
               onClick={close}
               className="absolute inset-0 z-10"
               style={{
-                background: `radial-gradient(circle at ${px.x(inspect.x)}% ${px.y(inspect.y)}%, transparent 0, transparent 18%, rgb(0 0 0 / 0.72) 46%)`,
+                background: `radial-gradient(circle at 50% ${(focusY / PANO.h) * 100}%, transparent 0, transparent 24%, rgb(0 0 0 / 0.55) 58%)`,
               }}
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
@@ -449,12 +633,10 @@ export function RoomScene(props: Props) {
           )}
         </AnimatePresence>
 
-        {/* 머리글 */}
-        <p className="pointer-events-none absolute inset-x-0 top-2 text-center font-mono text-[10px] tracking-[0.3em] text-zinc-300/80">
+        <p className="pointer-events-none absolute inset-x-0 top-2 text-center font-mono text-[10px] tracking-[0.3em] text-zinc-200/80 [text-shadow:0_1px_3px_#000]">
           AGENT &lsquo;늘곰&rsquo; HQ · 360°
         </p>
 
-        {/* 첫 터치: 본부 전원 켜기 */}
         {!powered && (
           <button type="button" data-fx="custom" onClick={onPowerOn} aria-label="본부 전원 켜기" className="absolute inset-0 z-20 cursor-pointer">
             <span className="pointer-events-none absolute inset-x-0 bottom-[12%] flex flex-col items-center gap-2">
@@ -468,23 +650,14 @@ export function RoomScene(props: Props) {
         )}
       </div>
 
-      {/* 아래 조작줄: 돌리기 · 지금 벽 · 벽 표시점 */}
-      <div className="flex items-center justify-between gap-2 px-4 pt-2">
+      {/* 조작줄: 돌기 · 지금 있는 곳 · 나침반 */}
+      <div className="flex items-center gap-2 px-4 pt-2">
         <TurnButton dir={-1} onClick={() => turn(-1)} />
-        <div className="flex min-w-0 flex-col items-center gap-1" aria-live="polite">
-          <span className="truncate text-sm font-bold">{station.name}</span>
-          <span className="flex gap-1.5" aria-hidden>
-            {STATIONS.map((s, i) => (
-              <span
-                key={s.id}
-                className="h-1.5 w-1.5 rounded-full"
-                style={{
-                  background: i === stationIdx ? "#ffffff" : hasOpenMission(s) ? "#ff00ff" : "#4a4a52",
-                  boxShadow: hasOpenMission(s) && i !== stationIdx ? "0 0 6px #ff00ff" : undefined,
-                }}
-              />
-            ))}
+        <div className="flex min-w-0 flex-1 flex-col items-center gap-1.5">
+          <span className="truncate text-sm font-bold" aria-live="polite">
+            {region}
           </span>
+          <Compass pan={pan} viewW={viewW} cleared={cleared} pending={pending} today={today} endingOpen={endingOpen} onPick={glideTo} />
         </div>
         <TurnButton dir={1} onClick={() => turn(1)} />
       </div>
@@ -498,62 +671,52 @@ export function RoomScene(props: Props) {
   );
 }
 
-function TurnButton({ dir, onClick }: { dir: 1 | -1; onClick: () => void }) {
+/* ───────── 물건 한 개: 누르는 단추 + 불이 켜졌을 때의 효과 ───────── */
+
+function SpotLayer(props: {
+  spot: Spot;
+  pan: MotionValue<number>;
+  /** 화면 폭 (CSS px) */
+  cw: number;
+  s: number;
+  alpha: MotionValue<number>;
+  lit: boolean;
+  glint: boolean;
+  denied: boolean;
+  onOpen: (spot: Spot) => void;
+  onKeyFocus: (spot: Spot) => void;
+}) {
+  const { spot, cw, s, lit, glint, denied, onOpen, onKeyFocus } = props;
+  const d = spot.r * 2 * s;
+  const x = useTransform(props.pan, (v) => cw / 2 + (wrapDelta(spot.x - v) - spot.r) * s);
   return (
-    <button
-      type="button"
-      data-fx="custom"
-      onClick={onClick}
-      aria-label={dir > 0 ? "오른쪽 벽으로 돌기" : "왼쪽 벽으로 돌기"}
-      className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-line text-lg text-zinc-200 active:bg-white/10"
-    >
-      {dir > 0 ? "›" : "‹"}
-    </button>
-  );
-}
-
-/* ───────── 불빛 레이어 ───────── */
-
-function LightPool({ src, spot, ignite, delay = 0, strength = 1 }: { src: string; spot: Spot; ignite: boolean; delay?: number; strength?: number }) {
-  const [r, g, b] = spot.glow;
-  const at = `${px.x(spot.x)}% ${px.y(spot.y)}%`;
-  const mask = `radial-gradient(ellipse ${px.x(spot.r)}% ${px.y(spot.r)}% at ${at}, #000 0%, #000 38%, transparent 100%)`;
-
-  // 켜지는 순간 지직
-  useEffect(() => {
-    if (!ignite) return;
-    const t = setTimeout(() => play("hum"), delay * 1000);
-    return () => clearTimeout(t);
-    // 켜질 때 한 번만
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  return (
-    <motion.div
-      className="pointer-events-none absolute inset-0"
-      initial={ignite ? { opacity: 0 } : false}
-      animate={{ opacity: ignite ? [0, strength, 0.12, strength * 0.85, 0.3, strength] : strength }}
-      transition={ignite ? { duration: 0.95, times: [0, 0.08, 0.18, 0.32, 0.46, 1], delay } : { duration: 0.3 }}
-    >
-      {/* eslint-disable-next-line @next/next/no-img-element */}
-      <img
-        src={src}
-        alt=""
-        className="absolute inset-0 h-full w-full"
-        style={{ maskImage: mask, WebkitMaskImage: mask, filter: "saturate(1.25) brightness(1.18)" }}
-        draggable={false}
-      />
-      <div
-        className="absolute inset-0"
-        style={{
-          background: `radial-gradient(ellipse ${px.x(spot.r * 1.35)}% ${px.y(spot.r * 1.35)}% at ${at}, rgb(${r} ${g} ${b} / 0.36), rgb(${r} ${g} ${b} / 0) 70%)`,
-          mixBlendMode: "screen",
+    <motion.div className="absolute left-0" style={{ x, top: (spot.y - spot.r) * s, width: d, height: d }}>
+      {lit && spot.fx && (
+        <motion.div className="pointer-events-none absolute inset-0" style={{ opacity: props.alpha }}>
+          <SpotEffect spot={spot} />
+        </motion.div>
+      )}
+      <motion.button
+        type="button"
+        data-fx="custom"
+        aria-label={`${spot.label}${spot.mission ? ` — ${getMission(spot.mission)?.title ?? ""}` : ""}`}
+        onClick={() => onOpen(spot)}
+        onFocus={(e) => {
+          // 키보드로 고르면 그쪽으로 돌아본다
+          if (e.currentTarget.matches(":focus-visible")) onKeyFocus(spot);
         }}
-      />
-      {spot.fx && <SpotEffect spot={spot} />}
+        animate={denied ? { x: [0, -5, 5, -4, 4, 0] } : { x: 0 }}
+        transition={{ duration: 0.35 }}
+        className="absolute inset-[16%] rounded-full outline-none focus-visible:ring-2 focus-visible:ring-magenta"
+      >
+        {glint && <Glint delay={(spot.x % 7) * 0.5} />}
+      </motion.button>
     </motion.div>
   );
 }
+
+/** 물건 상자(지름 2r) 기준 % 좌표 */
+const rel = (spot: Spot, v: number, axis: "x" | "y") => ((v - ((axis === "x" ? spot.x : spot.y) - spot.r)) / (spot.r * 2)) * 100;
 
 function SpotEffect({ spot }: { spot: Spot }) {
   const [r, g, b] = spot.glow;
@@ -563,7 +726,12 @@ function SpotEffect({ spot }: { spot: Spot }) {
       return (
         <div
           className="absolute overflow-hidden"
-          style={{ left: `${px.x(SCOPE_SCREEN.x)}%`, top: `${px.y(SCOPE_SCREEN.y)}%`, width: `${px.x(SCOPE_SCREEN.w)}%`, height: `${px.y(SCOPE_SCREEN.h)}%` }}
+          style={{
+            left: `${rel(spot, SCOPE_SCREEN.x, "x")}%`,
+            top: `${rel(spot, SCOPE_SCREEN.y, "y")}%`,
+            width: `${(SCOPE_SCREEN.w / (spot.r * 2)) * 100}%`,
+            height: `${(SCOPE_SCREEN.h / (spot.r * 2)) * 100}%`,
+          }}
         >
           <svg
             viewBox="0 0 200 40"
@@ -581,31 +749,38 @@ function SpotEffect({ spot }: { spot: Spot }) {
           </svg>
         </div>
       );
-    case "cone":
+    case "cone": {
+      const [b0, b1] = LAMP_CONE.bottom;
+      const [t0, t1] = LAMP_CONE.top;
+      const w = b1 - b0;
       return (
         <div
-          className="absolute inset-0"
+          className="absolute"
           style={{
-            clipPath: `polygon(${px.x(248)}% ${px.y(336)}%, ${px.x(306)}% ${px.y(336)}%, ${px.x(430)}% ${px.y(565)}%, ${px.x(160)}% ${px.y(565)}%)`,
+            left: `${rel(spot, b0, "x")}%`,
+            top: `${rel(spot, LAMP_CONE.topY, "y")}%`,
+            width: `${(w / (spot.r * 2)) * 100}%`,
+            height: `${((LAMP_CONE.bottomY - LAMP_CONE.topY) / (spot.r * 2)) * 100}%`,
+            clipPath: `polygon(${((t0 - b0) / w) * 100}% 0, ${((t1 - b0) / w) * 100}% 0, 100% 100%, 0 100%)`,
             background: `linear-gradient(to bottom, rgb(${r} ${g} ${b} / 0.42), rgb(${r} ${g} ${b} / 0) 95%)`,
-            mixBlendMode: "screen",
           }}
         />
       );
+    }
     case "rings":
       return (
         <>
-          {[0, 0.8, 1.6].map((d) => (
+          {[0, 0.8, 1.6].map((dl) => (
             <span
-              key={d}
+              key={dl}
               className="hq-anim absolute rounded-full border-2"
               style={{
-                left: `${px.x(spot.x)}%`,
-                top: `${px.y(spot.y)}%`,
-                width: `${px.x(spot.r * 1.8)}%`,
-                height: `${px.y(spot.r * 1.8)}%`,
+                left: "50%",
+                top: "50%",
+                width: "90%",
+                height: "90%",
                 borderColor: `rgb(${r} ${g} ${b} / 0.7)`,
-                animation: `hq-ring 2.4s ease-out ${d}s infinite`,
+                animation: `hq-ring 2.4s ease-out ${dl}s infinite`,
               }}
             />
           ))}
@@ -619,15 +794,14 @@ function SpotEffect({ spot }: { spot: Spot }) {
               key={rot}
               className="hq-anim absolute"
               style={{
-                left: `${px.x(spot.x - 60 + k * 70)}%`,
-                top: `${px.y(spot.y + 60)}%`,
-                width: `${px.x(110)}%`,
-                height: `${px.y(460)}%`,
+                left: `${28 + k * 22}%`,
+                top: "72%",
+                width: "34%",
+                height: "170%",
                 transformOrigin: "50% 0",
                 transform: `rotate(${rot}deg)`,
-                background: `linear-gradient(to bottom, rgb(${r} ${g} ${b} / 0.4), rgb(${r} ${g} ${b} / 0) 90%)`,
+                background: `linear-gradient(to bottom, rgb(${r} ${g} ${b} / 0.38), rgb(${r} ${g} ${b} / 0) 90%)`,
                 filter: "blur(6px)",
-                mixBlendMode: "screen",
                 animation: `hq-rays ${6 + k}s ease-in-out infinite`,
               }}
             />
@@ -637,14 +811,9 @@ function SpotEffect({ spot }: { spot: Spot }) {
     case "screen":
       return (
         <div
-          className="hq-anim absolute"
+          className="hq-anim absolute inset-[18%]"
           style={{
-            left: `${px.x(spot.x - spot.r * 0.85)}%`,
-            top: `${px.y(spot.y - spot.r * 0.7)}%`,
-            width: `${px.x(spot.r * 1.7)}%`,
-            height: `${px.y(spot.r * 1.4)}%`,
-            background: `repeating-linear-gradient(to bottom, rgb(${r} ${g} ${b} / 0.18) 0 2px, transparent 2px 5px)`,
-            mixBlendMode: "screen",
+            background: `repeating-linear-gradient(to bottom, rgb(${r} ${g} ${b} / 0.16) 0 2px, transparent 2px 5px)`,
             animation: "hq-pulse 1.6s ease-in-out infinite",
           }}
         />
@@ -653,20 +822,20 @@ function SpotEffect({ spot }: { spot: Spot }) {
       return (
         <>
           {[
-            [230, 230],
-            [295, 230],
-            [262, 455],
-            [318, 458],
-            [246, 225],
-            [305, 452],
+            [40, 22],
+            [52, 20],
+            [60, 24],
+            [55, 84],
+            [67, 86],
+            [50, 82],
           ].map(([x, y], k) => (
             <span
               key={k}
               className="hq-anim absolute rounded-full"
               style={{
-                left: `${px.x(x)}%`,
-                top: `${px.y(y)}%`,
-                width: `${px.x(7 + (k % 3) * 2)}%`,
+                left: `${x}%`,
+                top: `${y}%`,
+                width: `${3 + (k % 3)}%`,
                 aspectRatio: "1",
                 background: `rgb(${r} ${g} ${b} / 0.75)`,
                 boxShadow: `0 0 8px ${color}`,
@@ -680,10 +849,9 @@ function SpotEffect({ spot }: { spot: Spot }) {
     case "neon":
       return (
         <div
-          className="hq-anim absolute inset-0"
+          className="hq-anim absolute inset-0 rounded-full"
           style={{
-            background: `radial-gradient(ellipse ${px.x(spot.r)}% ${px.y(spot.r)}% at ${px.x(spot.x)}% ${px.y(spot.y)}%, rgb(${r} ${g} ${b} / ${spot.fx === "neon" ? 0.5 : 0.3}), transparent 70%)`,
-            mixBlendMode: "screen",
+            background: `radial-gradient(circle, rgb(${r} ${g} ${b} / ${spot.fx === "neon" ? 0.5 : 0.3}), transparent 68%)`,
             animation: spot.fx === "neon" ? "hq-neon 4s linear infinite" : "hq-pulse 2.6s ease-in-out infinite",
           }}
         />
@@ -693,6 +861,68 @@ function SpotEffect({ spot }: { spot: Spot }) {
   }
 }
 
+/* ───────── 나침반: 고리 전체 + 지금 보는 창 + 물건 표시 ───────── */
+
+function Compass(props: {
+  pan: MotionValue<number>;
+  viewW: number;
+  cleared: readonly string[];
+  pending: readonly string[];
+  today: string;
+  endingOpen: boolean;
+  onPick: (x: number) => void;
+}) {
+  const { pan, viewW, cleared, pending, today, endingOpen, onPick } = props;
+  const frac = viewW / PANO.w;
+  const left = useTransform(pan, (v) => `${(wrap(v - viewW / 2) / PANO.w) * 100}%`);
+  // 창이 오른쪽 끝을 넘으면 넘친 만큼 왼쪽에 한 조각 더
+  const spill = useTransform(pan, (v) => `${Math.max(0, wrap(v - viewW / 2) / PANO.w + frac - 1) * 100}%`);
+  return (
+    <div
+      aria-hidden
+      onClick={(e) => {
+        const r = e.currentTarget.getBoundingClientRect();
+        onPick(((e.clientX - r.left) / r.width) * PANO.w);
+      }}
+      className="relative h-4 w-full max-w-[240px] cursor-pointer"
+    >
+      <div className="absolute inset-x-0 top-1/2 h-px -translate-y-1/2 bg-line" />
+      <div className="absolute inset-0 overflow-hidden">
+        <motion.div className="absolute top-0 h-full rounded-sm border border-white/60 bg-white/10" style={{ left, width: `${frac * 100}%` }} />
+        <motion.div className="absolute left-0 top-0 h-full rounded-sm border border-white/60 bg-white/10" style={{ width: spill }} />
+      </div>
+      {SPOTS.map((sp) => {
+        const m = sp.mission ? getMission(sp.mission) : undefined;
+        const done = !!m && cleared.includes(m.id) && !pending.includes(m.id);
+        const open = !!m && !done && !lockState(m, cleared, today).locked;
+        const hot = open || (sp.kind === "exit" && endingOpen);
+        const color = hot ? "#ff00ff" : done ? "#7ff7ff" : "#5a5a62";
+        return (
+          <span
+            key={sp.id}
+            className="absolute top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full"
+            style={{ left: `${(sp.x / PANO.w) * 100}%`, background: color, boxShadow: hot ? "0 0 6px #ff00ff" : undefined }}
+          />
+        );
+      })}
+    </div>
+  );
+}
+
+function TurnButton({ dir, onClick }: { dir: 1 | -1; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      data-fx="custom"
+      onClick={onClick}
+      aria-label={dir > 0 ? "오른쪽으로 돌기" : "왼쪽으로 돌기"}
+      className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-line text-lg text-zinc-200 active:bg-white/10"
+    >
+      {dir > 0 ? "›" : "‹"}
+    </button>
+  );
+}
+
 /** 아직 안 깬 미션 물건에 가끔 반짝이는 표시 */
 function Glint({ delay }: { delay: number }) {
   return (
@@ -700,7 +930,7 @@ function Glint({ delay }: { delay: number }) {
       aria-hidden
       viewBox="0 0 20 20"
       className="hq-anim absolute h-5 w-5"
-      style={{ left: "62%", top: "38%", animation: `hq-glint 3.6s ease-in-out ${delay}s infinite`, filter: "drop-shadow(0 0 4px #ff00ff)" }}
+      style={{ left: "62%", top: "34%", animation: `hq-glint 3.6s ease-in-out ${delay}s infinite`, filter: "drop-shadow(0 0 4px #ff00ff)" }}
     >
       <path d="M10 0 L12 8 L20 10 L12 12 L10 20 L8 12 L0 10 L8 8 Z" fill="white" />
     </svg>
@@ -753,8 +983,8 @@ function InspectCard(props: {
   onClose: () => void;
 }) {
   const { spot, cleared, pending, today, endingOpen, onClose } = props;
-  const atTop = spot.y > ROOM.h * 0.55;
-  const box = `absolute inset-x-3 z-30 rounded-xl border bg-ink/90 p-4 backdrop-blur ${atTop ? "top-3" : "bottom-14"}`;
+  const atTop = spot.y > PANO.h * 0.51; // 물건이 아래쪽이면 카드는 위에
+  const box = `absolute inset-x-3 z-30 rounded-xl border bg-ink/90 p-4 backdrop-blur ${atTop ? "top-3" : "bottom-16"}`;
   const motionProps = {
     initial: { opacity: 0, y: atTop ? -14 : 14 },
     animate: { opacity: 1, y: 0 },
@@ -767,7 +997,6 @@ function InspectCard(props: {
     </button>
   );
 
-  // 탈출 문 = 엔딩
   if (spot.kind === "exit") {
     return (
       <motion.div role="dialog" aria-label="탈출 문" className={`${box} ${endingOpen ? "border-magenta" : "border-line"}`} {...motionProps}>
@@ -779,7 +1008,12 @@ function InspectCard(props: {
         <div className="mt-3 flex gap-2">
           {closeBtn}
           {endingOpen && (
-            <Link href="/ending" data-fx="custom" onClick={() => feel("thunk", "thunk")} className="flex-1 rounded-lg bg-magenta py-2.5 text-center text-sm font-bold text-ink">
+            <Link
+              href="/ending"
+              data-fx="custom"
+              onClick={() => feel("thunk", "thunk")}
+              className="flex-1 rounded-lg bg-magenta py-2.5 text-center text-sm font-bold text-ink"
+            >
               연구소로 ›
             </Link>
           )}
@@ -788,7 +1022,6 @@ function InspectCard(props: {
     );
   }
 
-  // 작전 지도 = 제3구역 벙커 안내
   if (spot.kind === "map") {
     const booths = MISSIONS.filter((m) => m.zone === 3);
     return (
@@ -802,7 +1035,7 @@ function InspectCard(props: {
               <li key={m.id} className="flex items-center justify-between gap-2">
                 <span className="truncate">
                   {m.codename} · {m.title}
-                  {m.senses && <span className="ml-1 text-xs text-fog">({m.senses.map((s) => SENSE_NAMES[s]).join("·")})</span>}
+                  {m.senses && <span className="ml-1 text-xs text-fog">({m.senses.map((x) => SENSE_NAMES[x]).join("·")})</span>}
                 </span>
                 <span className={`shrink-0 font-mono text-[11px] ${done ? "text-magenta" : "text-fog"}`}>
                   {done ? "탈환" : lock.locked ? lock.reason : "열림"}
@@ -821,7 +1054,12 @@ function InspectCard(props: {
   const lock = lockState(m, cleared, today);
   const locked = lock.locked && !done;
   return (
-    <motion.div role="dialog" aria-label={`${spot.label} — ${m.title}`} className={`${box} ${locked ? "border-line" : "border-magenta/70"}`} {...motionProps}>
+    <motion.div
+      role="dialog"
+      aria-label={`${spot.label} — ${m.title}`}
+      className={`${box} ${locked ? "border-line" : "border-magenta/70"}`}
+      {...motionProps}
+    >
       <p className="font-mono text-[10px] tracking-widest text-fog">
         {m.codename} · {spot.label}
       </p>
