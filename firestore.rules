@@ -1,0 +1,99 @@
+rules_version = '2';
+
+// 평범한 스파이 — Firestore 보안 규칙
+// Firebase 콘솔 → Firestore Database → 규칙 탭에 통째로 붙여 넣고 '게시'를 누른다.
+//
+// - 학생: 익명 로그인(+복구 코드). 자기 요원 문서만 읽고 쓴다. 이름·학번·이메일은 저장하지 않는다.
+// - 학생 글: '검토 대기'로만 올릴 수 있고, 선생님이 '공개'해야 다른 요원에게 보인다.
+// - 선생님: 아래 목록에 있는 구글 계정만 글 검토와 연구소 개방을 할 수 있다.
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    // ★ 선생님 구글 계정. Firebase 콘솔에 붙여 넣을 때 예시 주소를 실제 계정으로 바꾼다.
+    //   (공개 저장소라 실제 주소는 여기 적어 두지 않는다. 여러 명이면 ['a@gmail.com', 'b@gmail.com'])
+    function isTeacher() {
+      return signedIn()
+        && request.auth.token.firebase.sign_in_provider == 'google.com'
+        && request.auth.token.email_verified == true
+        && request.auth.token.email in ['teacher@example.com'];
+    }
+
+    // ───── 요원 ─────
+    match /spies/{uid} {
+      function isOwner() {
+        return signedIn() && request.auth.uid == uid;
+      }
+      function validSpy(d) {
+        return d.keys().hasOnly(['isLoggedIn', 'codename', 'recoveryCode', 'pixels', 'clearedMissions', 'dailyDone', 'finalRoutine'])
+          && d.isLoggedIn is bool
+          && d.codename is string && d.codename.size() > 0 && d.codename.size() <= 30
+          && (d.get('recoveryCode', null) == null
+              || (d.recoveryCode is string && d.recoveryCode.size() == 8))
+          && d.clearedMissions is list && d.clearedMissions.size() <= 30
+          && d.pixels == d.clearedMissions.size()
+          && d.get('dailyDone', []) is list && d.get('dailyDone', []).size() <= 20
+          && (d.get('finalRoutine', null) == null
+              || d.finalRoutine in ['sight', 'hearing', 'smell', 'taste', 'touch']);
+      }
+
+      allow read: if isOwner();
+      allow create: if isOwner() && validSpy(request.resource.data);
+      // 요원명은 처음 정해지면 바꿀 수 없다
+      allow update: if isOwner() && validSpy(request.resource.data)
+        && request.resource.data.codename == resource.data.codename;
+      allow delete: if false;
+    }
+
+    // ───── 학생 글 (posts/{uid}_{종류}) ─────
+    match /posts/{postId} {
+      function validPost(d) {
+        return d.keys().hasOnly(['authorId', 'codename', 'kind', 'text', 'status', 'flagged', 'createdAt', 'reviewedAt'])
+          && d.kind in ['mirror', 'routine']
+          && d.text is string && d.text.size() > 0 && d.text.size() <= 100
+          && d.flagged is bool
+          && d.status in ['pending', 'approved', 'rejected'];
+      }
+
+      allow read: if isTeacher()
+        || (signedIn() && resource.data.status == 'approved')
+        || (signedIn() && resource.data.authorId == request.auth.uid);
+
+      // 학생: 자기 글을 '검토 대기'로만 올린다. 다시 쓰면 다시 검토를 받는다.
+      allow create, update: if signedIn()
+        && postId == request.auth.uid + '_' + request.resource.data.kind
+        && request.resource.data.authorId == request.auth.uid
+        && request.resource.data.status == 'pending'
+        && request.resource.data.createdAt == request.time
+        && request.resource.data.get('reviewedAt', null) == null
+        && request.resource.data.codename
+             == get(/databases/$(database)/documents/spies/$(request.auth.uid)).data.codename
+        && validPost(request.resource.data);
+
+      // 선생님: 공개/숨김만 바꾼다 (글 내용은 고칠 수 없다)
+      allow update: if isTeacher()
+        && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status', 'reviewedAt'])
+        && request.resource.data.status in ['pending', 'approved', 'rejected'];
+
+      allow delete: if isTeacher()
+        || (signedIn() && resource.data.authorId == request.auth.uid);
+    }
+
+    // ───── 게임 설정 (늘곰 연구소 개방 등) ─────
+    match /config/game {
+      allow read: if signedIn();
+      allow write: if isTeacher()
+        && request.resource.data.keys().hasOnly(['endingOpen'])
+        && request.resource.data.endingOpen is bool;
+    }
+
+    // 관제실이 '선생님 계정인지' 확인할 때 읽어 보는 문서 (없어도 된다)
+    match /config/teacher {
+      allow read: if isTeacher();
+    }
+  }
+}
