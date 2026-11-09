@@ -1,0 +1,23 @@
+{
+  "name": "spy-promo",
+  "private": true,
+  "description": "평범한 스파이 홍보 쇼츠 (Remotion)",
+  "scripts": {
+    "prepare-assets": "node scripts/prepare.cjs",
+    "capture": "node scripts/capture.cjs",
+    "sfx": "node scripts/sfx.cjs",
+    "studio": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts Promo out/promo.mp4"
+  },
+  "dependencies": {
+    "@remotion/cli": "4.0.541",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
+    "remotion": "4.0.541"
+  },
+  "devDependencies": {
+    "@types/react": "19.3.0",
+    "playwright-core": "1.56.1",
+    "typescript": "5.9.3"
+  }
+}

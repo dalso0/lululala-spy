@@ -45,3 +45,8 @@ next-env.d.ts
 /image*.png
 /*.mp4
 /*.mov
+
+# 홍보 영상: 만들 때 생기는 것(녹화 프레임·소리·복사한 그림·결과 영상)
+/promo/node_modules
+/promo/public
+/promo/out
