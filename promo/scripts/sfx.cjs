@@ -26,6 +26,10 @@ const SOUNDS = [
   fs.mkdirSync(OUT, { recursive: true });
   const server = http
     .createServer((req, res) => {
+      if (req.url.startsWith("/footage.mp4")) {
+        res.writeHead(200, { "Content-Type": "video/mp4" });
+        return fs.createReadStream(path.join(__dirname, "..", "public", TL.footage.file)).pipe(res);
+      }
       if (req.url.startsWith("/sound.mjs")) {
         res.writeHead(200, { "Content-Type": "text/javascript" });
         return res.end(soundJs);
@@ -98,7 +102,7 @@ const SOUNDS = [
   }
   console.log(`효과음 ${SOUNDS.length}개`);
 
-  // 2) 배경 음악 (장면 시간표에 맞춰)
+  // 2) 배경 음악 (장면 시간표에 맞춰). video7 장면에서는 쉬고 그 영상 소리가 나온다
   const score = await page.evaluate(async (TL) => {
     const SR = 48000;
     const D = TL.seconds;
@@ -166,24 +170,29 @@ const SOUNDS = [
       o.start(t);
       o.stop(t + a + dur + 0.05);
     };
-    const kick = (t, gain = 0.9) => tone(t, 0.32, { f: 150, f2: 42, gain });
-    const hat = (t, gain = 0.12) => noise(t, 0.05, { type: "highpass", f: 7500, gain, pan: 0.2 });
-    const clap = (t, gain = 0.3) => noise(t, 0.16, { type: "bandpass", f: 1700, q: 0.8, gain });
+    const kick = (t, gain = 0.9) => tone(t, 0.3, { f: 150, f2: 42, gain });
+    const hat = (t, gain = 0.12) => noise(t, 0.045, { type: "highpass", f: 7500, gain, pan: 0.2 });
+    const clap = (t, gain = 0.3) => noise(t, 0.15, { type: "bandpass", f: 1700, q: 0.8, gain });
     const boom = (t, gain = 1) => {
       tone(t, 1.1, { f: 70, f2: 28, gain });
       noise(t, 1.3, { type: "lowpass", f: 2400, f2: 200, gain: 0.35 * gain });
     };
-    const A = 55; // 라(A1)
+    const A = 55;
     const hz = (semi) => A * Math.pow(2, semi / 12);
+    const beat = 60 / TL.bpm;
 
-    // 깔린 소리(드론): 회색 안개 — 처음부터 색이 돌아오기 전까지
+    // 낮게 깔린 소리(드론): 요원명 발급 장면 앞에서 들어와 작전이 시작되면 물러난다
     {
       const g = c.createGain();
+      const t0 = S.recruit[0] - 0.8;
       g.gain.setValueAtTime(0.0001, 0);
-      g.gain.linearRampToValueAtTime(0.11, 1.2);
-      g.gain.setValueAtTime(0.11, S.daily[0] - 0.4);
-      g.gain.linearRampToValueAtTime(0.05, S.daily[0]);
-      g.gain.setValueAtTime(0.05, S.color[0] - 0.05);
+      g.gain.setValueAtTime(0.0001, t0);
+      g.gain.linearRampToValueAtTime(0.11, S.recruit[0] + 0.2);
+      g.gain.setValueAtTime(0.11, S.v7hack[0] - 0.1);
+      g.gain.linearRampToValueAtTime(0.03, S.v7hack[0] + 0.2);
+      g.gain.setValueAtTime(0.03, S.daily[0]);
+      g.gain.linearRampToValueAtTime(0.045, S.daily[0] + 0.3);
+      g.gain.setValueAtTime(0.045, S.color[0] - 0.05);
       g.gain.linearRampToValueAtTime(0.0001, S.color[0] + 0.3);
       const fl = c.createBiquadFilter();
       fl.type = "lowpass";
@@ -202,58 +211,38 @@ const SOUNDS = [
         const og = c.createGain();
         og.gain.value = i === 3 ? 0.4 : 0.7;
         o.connect(og).connect(fl);
-        o.start(0);
+        o.start(t0);
         o.stop(S.color[0] + 0.5);
       });
       fl.connect(g).connect(master);
     }
 
-    // 1) 훅: 지지직 + 낮은 쿵
-    noise(0, 0.5, { f: 2600, q: 0.7, gain: 0.25 });
-    noise(0.05, 0.25, { type: "highpass", f: 5000, gain: 0.12 });
-    boom(0.12, 0.7);
-    noise(S.sos[0] - 0.18, 0.3, { f: 3000, q: 0.6, gain: 0.25 });
-
-    // 2) 늘곰 SOS: 무전 잡음 + 모스 신호(· · · — — — · · ·) + 심장 소리
-    noise(S.sos[0], S.sos[1] - S.sos[0], { f: 1800, q: 2.5, gain: 0.05, a: 0.4 });
-    {
-      let t = S.sos[0] + 0.45;
-      const dot = 0.075;
-      const dash = 0.22;
-      const gap = 0.07;
-      for (const sym of "...---...") {
-        const d = sym === "." ? dot : dash;
-        tone(t, d, { f: 900, type: "square", gain: 0.06, a: 0.004, lp: 2500 });
-        t += d + gap;
-      }
+    // 요원명 발급: 심장 소리 → "바로 너." 쿵 → video7 로 넘어가는 쉭
+    for (let t = S.recruit[0] + 0.1; t < S.recruit[1] - 0.2; t += 60 / 80) {
+      tone(t, 0.14, { f: 62, f2: 40, gain: 0.5 });
+      tone(t + 0.18, 0.12, { f: 55, f2: 38, gain: 0.3 });
     }
-    noise(S.recruit[0] - 0.35, 0.4, { f: 2200, q: 0.5, gain: 0.3 }); // 신호 끊김
-    for (let t = S.sos[0] + 0.2; t < S.daily[0] - 0.3; t += 60 / 76) {
-      tone(t, 0.14, { f: 62, f2: 40, gain: 0.55 });
-      tone(t + 0.19, 0.12, { f: 55, f2: 38, gain: 0.35 });
-    }
-    boom(S.recruit[0] + 2.0, 0.6); // "바로 너."
+    boom(TL.beats.you, 0.75);
+    noise(S.recruit[1] - 0.45, 0.45, { type: "highpass", f: 600, f2: 7000, gain: 0.14, a: 0.4 });
 
-    // 3) 작전 장면: 120 BPM, 3초(6박)마다 장면이 바뀐다
-    const bpm = 120;
-    const beat = 60 / bpm;
-    const bass = [0, 0, 0, 0, 3, 3, -2, -2]; // 라 라 라 라 도 도 솔 솔 (8분음표)
+    // 작전 장면: 144 BPM, 2.5초(6박)마다 장면이 바뀐다
+    noise(S.daily[0] - 0.6, 0.6, { type: "highpass", f: 400, f2: 8000, gain: 0.1, a: 0.55 });
+    const bass = [0, 0, 0, 0, 3, 3, -2, -2];
     for (let i = 0, t = S.daily[0]; t < S.color[0] - 0.01; i++, t += beat) {
-      kick(t, i % 6 === 0 ? 1 : 0.8);
-      hat(t + beat / 2);
-      if (i % 2 === 1) clap(t);
+      kick(t, i % 6 === 0 ? 1.25 : 1.05);
+      hat(t + beat / 2, 0.16);
+      if (i % 2 === 1) clap(t, 0.4);
       for (let e = 0; e < 2; e++) {
         const tt = t + (e * beat) / 2;
-        tone(tt, beat / 2 - 0.02, { f: hz(bass[(i * 2 + e) % 8] + 12), type: "sawtooth", gain: 0.13, lp: 420, a: 0.004 });
+        tone(tt, beat / 2 - 0.02, { f: hz(bass[(i * 2 + e) % 8] + 12), type: "sawtooth", gain: 0.19, lp: 480, a: 0.004 });
       }
-      if (i % 6 === 0) noise(t - 0.12, 0.22, { type: "highpass", f: 1200, f2: 6000, gain: 0.12 }); // 장면 넘어가는 쉭
+      if (i % 6 === 0 && i > 0) noise(t - 0.12, 0.22, { type: "highpass", f: 1200, f2: 6000, gain: 0.12 });
     }
-    // 올라가는 소리 → 쿵 (색이 돌아온다)
     noise(S.color[0] - 1.0, 1.0, { type: "highpass", f: 300, f2: 9000, gain: 0.16, a: 0.9 });
     tone(S.color[0] - 1.0, 1.0, { f: 180, f2: 1400, type: "sawtooth", gain: 0.05, a: 0.9, lp: 3000 });
     boom(S.color[0], 1);
 
-    // 4) 색이 돌아온다: 라 장조 화음이 열리고 반짝이는 소리
+    // 색이 돌아온다: 라 장조 화음 + 반짝이
     const chord = (t, dur, gain, semis = [12, 16, 19, 24]) => {
       const fl = c.createBiquadFilter();
       fl.type = "lowpass";
@@ -261,8 +250,8 @@ const SOUNDS = [
       fl.frequency.exponentialRampToValueAtTime(3200, t + Math.min(2.5, dur));
       const g = c.createGain();
       g.gain.setValueAtTime(0.0001, t);
-      g.gain.linearRampToValueAtTime(gain, t + 0.6);
-      g.gain.setValueAtTime(gain, t + dur - 0.6);
+      g.gain.linearRampToValueAtTime(gain, t + 0.5);
+      g.gain.setValueAtTime(gain, Math.max(t + 0.5, t + dur - 0.5));
       g.gain.linearRampToValueAtTime(0.0001, t + dur);
       fl.connect(g).connect(master);
       semis.forEach((s, k) => {
@@ -276,29 +265,35 @@ const SOUNDS = [
         }
       });
     };
-    chord(S.color[0], S.cta[0] - S.color[0] + 0.4, 0.07);
+    chord(S.color[0], S.cta[0] - S.color[0] + 0.3, 0.07);
     const arp = [24, 28, 31, 36, 31, 28];
-    for (let i = 0, t = S.color[0] + 0.5; t < S.cta[0]; i++, t += beat / 2) tone(t, 0.18, { f: hz(arp[i % arp.length] + 12), type: "triangle", gain: 0.035, pan: i % 2 ? 0.3 : -0.3 });
+    for (let i = 0, t = S.color[0] + 0.4; t < S.cta[0]; i++, t += beat / 2) tone(t, 0.16, { f: hz(arp[i % arp.length] + 12), type: "triangle", gain: 0.035, pan: i % 2 ? 0.3 : -0.3 });
     for (let t = S.color[0]; t < S.cta[0]; t += beat * 2) kick(t, 0.7);
 
-    // 5) 키링 '톡': 조용해졌다가 → 톡! 화음 + 북 → 끝 인사
+    // 키링: 숨 고르고 → 톡! → video7 마지막 장면 전에 물러난다
     const tag = TL.beats.tagTouch;
     for (let t = S.cta[0]; t < tag - 0.1; t += beat) hat(t, 0.08);
     tone(S.cta[0], tag - S.cta[0], { f: hz(12), type: "triangle", gain: 0.05, a: 0.3, lp: 900 });
     boom(tag, 0.8);
-    chord(tag, D - tag, 0.08, [12, 16, 19, 24, 28]);
-    for (let i = 0, t = tag; t < D - 0.6; i++, t += beat) {
+    chord(tag, S.v7cta[0] - tag + 0.15, 0.08, [12, 16, 19, 24, 28]);
+    for (let i = 0, t = tag; t < S.v7cta[0] - 0.05; i++, t += beat) {
       kick(t, i === 0 ? 1 : 0.75);
       hat(t + beat / 2, 0.1);
       if (i % 2 === 1) clap(t, 0.25);
     }
-    boom(TL.beats.logo, 0.6);
-    // 마지막 0.6초 페이드
-    master.gain.setValueAtTime(0.9, D - 0.7);
+
+    // 마지막 카드: 쿵 + 화음 → "작전 개시!" → 끝
+    boom(TL.beats.endHit, 0.9);
+    chord(TL.beats.endHit, D - TL.beats.endHit, 0.09, [12, 16, 19, 24, 28]);
+    kick(TL.beats.endHit + 0.6, 1);
+    for (let i = 0, t = TL.beats.endHit + 0.6; t < D - 0.7; i++, t += beat) {
+      if (i) kick(t, 0.7);
+      hat(t + beat / 2, 0.09);
+    }
+    master.gain.setValueAtTime(0.9, D - 0.8);
     master.gain.linearRampToValueAtTime(0.0001, D - 0.02);
 
     const buf = await c.startRendering();
-    // 최고 음량을 -1dB 근처로 맞춘다
     let peak = 0;
     for (let ch = 0; ch < 2; ch++) for (const v of buf.getChannelData(ch)) peak = Math.max(peak, Math.abs(v));
     const k = 0.89 / (peak || 1);
@@ -315,8 +310,25 @@ const SOUNDS = [
   // 3) 음악 + 효과음을 한 줄로 섞고, 쇼츠에 맞는 크기(평균 약 -16dB, 최고 -1dB)로 다듬는다
   const PLAN = require("./sfx-plan.cjs");
   const mix = await page.evaluate(
-    async ({ PLAN, fps, seconds }) => {
+    async ({ PLAN, fps, seconds, TL }) => {
       const SR = 48000;
+      // video7 소리: 쓰는 구간만, 다른 장면과 비슷한 크기로
+      const foot = await new OfflineAudioContext(2, SR, SR).decodeAudioData(await (await fetch("/footage.mp4")).arrayBuffer());
+      const parts = Object.entries(TL.footage.from).map(([scene, src]) => ({ at: TL.scenes[scene][0], src, dur: TL.scenes[scene][1] - TL.scenes[scene][0] }));
+      let fs2 = 0;
+      let fn = 0;
+      let fpeak = 0;
+      for (const p of parts)
+        for (let ch = 0; ch < 2; ch++) {
+          const d = foot.getChannelData(ch);
+          for (let i = Math.floor(p.src * foot.sampleRate); i < Math.min(d.length, (p.src + p.dur) * foot.sampleRate); i++) {
+            fs2 += d[i] * d[i];
+            fn++;
+            fpeak = Math.max(fpeak, Math.abs(d[i]));
+          }
+        }
+      const fRms = 20 * Math.log10(Math.sqrt(fs2 / Math.max(1, fn)) + 1e-9);
+      const footGain = Math.min(Math.pow(10, (-19 - fRms) / 20), 0.95 / (fpeak || 1));
       const render = async (makeup) => {
         const c = new OfflineAudioContext(2, SR * seconds, SR);
         const bus = c.createGain();
@@ -345,6 +357,18 @@ const SOUNDS = [
         };
         add(window.__score, 0, 0.9);
         for (const [fr, name, vol] of PLAN) add(window.__bufs[name], fr / fps, vol);
+        for (const p of parts) {
+          const s = c.createBufferSource();
+          s.buffer = foot;
+          const g = c.createGain();
+          const fade = 0.04;
+          g.gain.setValueAtTime(p.at === 0 ? footGain : 0, p.at);
+          if (p.at > 0) g.gain.linearRampToValueAtTime(footGain, p.at + fade);
+          g.gain.setValueAtTime(footGain, p.at + p.dur - fade);
+          g.gain.linearRampToValueAtTime(0, p.at + p.dur);
+          s.connect(g).connect(bus);
+          s.start(p.at, p.src, p.dur);
+        }
         return c.startRendering();
       };
       const stats = (buf) => {
@@ -370,7 +394,7 @@ const SOUNDS = [
       const fin = stats(buf);
       return { wav: window.toWav(buf, false), rmsDb: fin.rmsDb.toFixed(1), peakDb: (20 * Math.log10(fin.peak)).toFixed(1), makeupDb: (20 * Math.log10(makeup)).toFixed(1) };
     },
-    { PLAN, fps: TL.fps, seconds: TL.seconds },
+    { PLAN, fps: TL.fps, seconds: TL.seconds, TL },
   );
   fs.writeFileSync(path.join(OUT, "mix.wav"), Buffer.from(mix.wav, "base64"));
   console.log(`섞은 소리 mix.wav: 평균 ${mix.rmsDb}dB · 최고 ${mix.peakDb}dB (보정 +${mix.makeupDb}dB)`);

@@ -9,7 +9,9 @@ type SceneName = keyof typeof TL.scenes;
 export const SC = Object.fromEntries(
   (Object.entries(TL.scenes) as [SceneName, number[]][]).map(([k, [a, b]]) => [k, { from: sec(a), dur: sec(b) - sec(a) }]),
 ) as Record<SceneName, { from: number; dur: number }>;
-export const BEAT = { tag: sec(TL.beats.tagTouch), logo: sec(TL.beats.logo) };
+export const BEAT = { you: sec(TL.beats.you), tag: sec(TL.beats.tagTouch), end: sec(TL.beats.endHit) };
+/** 다른 모델이 만든 영상(video7) 조각: 장면 이름 → 원본에서 시작하는 프레임 */
+export const FOOT = { file: TL.footage.file, from: Object.fromEntries(Object.entries(TL.footage.from).map(([k, v]) => [k, sec(v)])) as Record<"v7open" | "v7hack" | "v7cta", number> };
 
 // 앱과 같은 색
 export const C = {

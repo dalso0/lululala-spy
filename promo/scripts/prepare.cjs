@@ -24,6 +24,9 @@ const CROPS = {
   fs.mkdirSync(path.join(OUT, "art"), { recursive: true });
   fs.mkdirSync(path.join(OUT, "neulgom"), { recursive: true });
   for (const f of ["bomb.webp", "case.webp"]) fs.copyFileSync(path.join(APP, "public", "art", f), path.join(OUT, "art", f));
+  // 다른 모델이 만든 시네마틱 영상(교실 복도 경보 · 인형 늘곰 · 키링 태그) — 화질이 좋아서 앞뒤에 쓴다
+  fs.mkdirSync(path.join(OUT, "footage"), { recursive: true });
+  fs.copyFileSync(path.join(APP, "video7.mp4"), path.join(OUT, "footage", "v7.mp4"));
   for (const n of POSE_NAMES) fs.copyFileSync(path.join(POSES, `${n}.png`), path.join(OUT, "neulgom", `${n}.png`));
 
   const manifest = JSON.parse(fs.readFileSync(path.join(APP, "public", "art", "pano", "manifest.json"), "utf8"));

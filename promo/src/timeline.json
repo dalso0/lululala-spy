@@ -1,19 +1,27 @@
 {
   "fps": 30,
-  "seconds": 30,
+  "seconds": 32,
   "scenes": {
-    "hook": [0, 2.8],
-    "sos": [2.8, 6.0],
-    "recruit": [6.0, 9.6],
-    "daily": [9.6, 12.6],
-    "bomb": [12.6, 15.6],
-    "mirror": [15.6, 18.6],
-    "ceremony": [18.6, 21.6],
-    "color": [21.6, 25.6],
-    "cta": [25.6, 30.0]
+    "v7open": [0, 6.0],
+    "recruit": [6.0, 9.0],
+    "v7hack": [9.0, 10.6],
+    "daily": [10.6, 13.1],
+    "bomb": [13.1, 15.6],
+    "mirror": [15.6, 18.1],
+    "ceremony": [18.1, 20.6],
+    "color": [20.6, 24.6],
+    "cta": [24.6, 27.6],
+    "v7cta": [27.6, 29.5],
+    "end": [29.5, 32.0]
+  },
+  "footage": {
+    "file": "footage/v7.mp4",
+    "from": { "v7open": 0.0, "v7hack": 6.0, "v7cta": 8.0 }
   },
   "beats": {
-    "tagTouch": 27.0,
-    "logo": 28.3
-  }
+    "you": 7.35,
+    "tagTouch": 25.6,
+    "endHit": 29.5
+  },
+  "bpm": 144
 }

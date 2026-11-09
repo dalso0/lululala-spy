@@ -291,25 +291,43 @@ export const PixelMeter: React.FC<{ events: number[]; hideAt?: number }> = ({ ev
   );
 };
 
-/** 키링 (실제 키링 사진을 받으면 바꿔 끼우면 된다) */
-export const Keyring: React.FC<{ size: number }> = ({ size }) => (
-  <svg width={size} height={size * 1.45} viewBox="0 0 200 290" style={{ overflow: "visible", filter: "drop-shadow(0 18px 30px rgba(0,0,0,.55))" }}>
-    <defs>
-      <linearGradient id="kr-metal" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stopColor="#f2f3f7" />
-        <stop offset=".5" stopColor="#9a9eaa" />
-        <stop offset="1" stopColor="#e3e5ea" />
-      </linearGradient>
-    </defs>
-    <circle cx="100" cy="40" r="30" fill="none" stroke="url(#kr-metal)" strokeWidth="9" />
-    <rect x="91" y="64" width="18" height="30" rx="7" fill="none" stroke="#c4c7cf" strokeWidth="6" />
-    <rect x="20" y="88" width="160" height="196" rx="36" fill="#FBF5E5" stroke="#5a3b28" strokeWidth="6" />
-    <rect x="34" y="102" width="132" height="168" rx="26" fill="none" stroke="#e8dcc2" strokeWidth="3" />
-    <g transform="translate(86,180)" stroke={C.magenta} strokeWidth="10" fill="none" strokeLinecap="round">
-      <path d="M -6 -16 A 22 22 0 0 1 -6 16" />
-      <path d="M 10 -32 A 42 42 0 0 1 10 32" />
-      <path d="M 26 -48 A 62 62 0 0 1 26 48" />
-    </g>
-    <circle cx="70" cy="180" r="8" fill={C.magenta} />
-  </svg>
-);
+/** 키링: 홀로그램 원판 + 고리 (video7 의 빛나는 원판 키링과 같은 모양). 실제 키링 사진을 받으면 바꿔 끼운다 */
+export const Keyring: React.FC<{ size: number }> = ({ size }) => {
+  const d = size * 0.92;
+  return (
+    <div style={{ position: "relative", width: size, height: size * 1.22, filter: "drop-shadow(0 18px 28px rgba(0,0,0,.55))" }}>
+      <div
+        style={{
+          position: "absolute",
+          left: size * 0.02,
+          top: 0,
+          width: size * 0.32,
+          height: size * 0.32,
+          borderRadius: "50%",
+          border: `${size * 0.045}px solid #dcdfe6`,
+          boxShadow: "inset 0 0 6px rgba(0,0,0,.5), 0 2px 6px rgba(0,0,0,.4)",
+          boxSizing: "border-box",
+        }}
+      />
+      <div
+        style={{
+          position: "absolute",
+          left: size * 0.06,
+          top: size * 0.26,
+          width: d,
+          height: d,
+          borderRadius: "50%",
+          background: "conic-gradient(from 30deg, #a6f4ff, #ff86f4, #ffeaa6, #8dffcb, #86b9ff, #f28dff, #a6f4ff)",
+          boxShadow: "0 0 46px rgba(127,247,255,.6), 0 0 90px rgba(255,0,255,.35), inset 0 0 0 4px rgba(255,255,255,.65)",
+          overflow: "hidden",
+        }}
+      >
+        <div style={{ position: "absolute", inset: 0, background: "radial-gradient(circle at 32% 28%, rgba(255,255,255,.85), rgba(255,255,255,0) 42%)" }} />
+        <div style={{ position: "absolute", inset: 0, background: "repeating-radial-gradient(circle at 50% 50%, rgba(255,255,255,.12) 0 2px, transparent 2px 7px)" }} />
+        <div style={{ position: "absolute", left: "50%", top: "50%", width: d * 0.34, height: d * 0.34, transform: "translate(-50%,-50%)", borderRadius: "50%", background: "rgba(255,255,255,.35)", boxShadow: "inset 0 0 0 3px rgba(255,255,255,.7)" }} />
+        <div style={{ position: "absolute", left: "50%", top: "50%", width: d * 0.13, height: d * 0.13, transform: "translate(-50%,-50%)", borderRadius: "50%", background: "#0b0b10" }} />
+        <div style={{ position: "absolute", left: d * 0.14, top: d * 0.12, width: d * 0.07, height: d * 0.07, borderRadius: "50%", background: "#0b0b10", boxShadow: "0 0 0 3px rgba(255,255,255,.6)" }} />
+      </div>
+    </div>
+  );
+};
