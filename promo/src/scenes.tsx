@@ -133,7 +133,7 @@ export const MissionBeat: React.FC<{ beat: BeatDef; dur: number }> = ({ beat, du
   );
 };
 
-/* ───────── 색이 돌아온다 → 12.15 D-DAY (탈출 문) ───────── */
+/* ───────── 색이 돌아온다 → 12.10 D-DAY (탈출 문) → 모든 요원이 한자리에 모인다 ───────── */
 export const ColorScene: React.FC = () => {
   const f = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -167,13 +167,17 @@ export const ColorScene: React.FC = () => {
     );
   }
   const g = f - CUT;
-  const pan = interpolate(g, [0, 60], [-270, -340]);
+  const G = SC.color.dur - CUT; // 문 장면 길이 (3초)
+  const pan = interpolate(g, [0, G], [-260, -360]);
+  const GATHER = 40; // 둘째 줄 '모든 요원이 한자리에 모인다'가 뜨는 프레임
+  const gather = spring({ frame: g - GATHER, fps, config: { damping: 10, stiffness: 180 } });
   const neon = 0.65 + 0.35 * Math.sin(g / 3.2);
   const dday = spring({ frame: g - 2, fps, config: { damping: 11, stiffness: 170 } });
   const door = { x: 558, y: 148, w: 576, h: 1132 }; // pano-door 안 탈출 문 자리
   return (
     <AbsoluteFill style={{ background: C.ink }}>
-      <div style={band}>
+      {/* 글씨를 쇼츠 화면 아래쪽 UI 에 가리지 않게 위로 모으고, 문 그림은 그 아래에 */}
+      <div style={{ ...band, top: 590 }}>
         <Img src={staticFile("art/pano-door.jpg")} style={{ position: "absolute", top: 0, left: pan, height: 1280, filter: "saturate(1.15) brightness(.95)" }} />
         <div
           style={{
@@ -189,11 +193,31 @@ export const ColorScene: React.FC = () => {
         />
         <div style={{ position: "absolute", inset: 0, boxShadow: "inset 0 0 120px 30px rgba(14,14,16,.95)" }} />
       </div>
-      <div style={{ position: "absolute", top: 140, width: "100%", textAlign: "center", transform: `scale(${interpolate(dday, [0, 1], [1.8, 1])})`, opacity: Math.min(1, dday * 2) }}>
-        <div style={{ fontFamily: FONT.sans, fontWeight: 900, fontSize: 168, letterSpacing: "-0.03em", color: C.magenta, lineHeight: 1, textShadow: "0 0 70px rgba(255,0,255,.65)" }}>12.15</div>
+      <div style={{ position: "absolute", top: 104, width: "100%", textAlign: "center", transform: `scale(${interpolate(dday, [0, 1], [1.8, 1])})`, opacity: Math.min(1, dday * 2) }}>
+        <div style={{ fontFamily: FONT.sans, fontWeight: 900, fontSize: 168, letterSpacing: "-0.03em", color: C.magenta, lineHeight: 1, textShadow: "0 0 70px rgba(255,0,255,.65)" }}>12.10</div>
         <div style={{ fontFamily: FONT.mono, fontWeight: 700, fontSize: 56, color: C.white, letterSpacing: ".3em", marginTop: 6 }}>D-DAY</div>
       </div>
-      <Lines at={10} style={{ top: 1730 }} lines={[{ t: "제3구역 벙커가 열린다", size: 54, color: "#d9d9e0", weight: 800 }]} />
+      <Lines at={10} style={{ top: 392 }} lines={[{ t: "제3구역 벙커가 열린다", size: 56, color: "#d9d9e0", weight: 800 }]} />
+      {g >= GATHER && (
+        <div
+          style={{
+            position: "absolute",
+            top: 470,
+            width: "100%",
+            textAlign: "center",
+            fontFamily: FONT.sans,
+            fontWeight: 900,
+            fontSize: 70,
+            letterSpacing: "-0.025em",
+            color: C.white,
+            transform: `scale(${interpolate(gather, [0, 1], [1.5, 1])})`,
+            opacity: Math.min(1, gather * 2),
+            textShadow: "0 0 40px rgba(255,0,255,.45), 0 6px 30px rgba(0,0,0,.7)",
+          }}
+        >
+          모든 요원이 <M>한자리에</M> 모인다
+        </div>
+      )}
       <Grain id="color-b" opacity={0.08} />
     </AbsoluteFill>
   );
@@ -291,25 +315,29 @@ export const EndCard: React.FC = () => {
           평범한 스파이
         </GlitchText>
       </div>
-      {/* 늘곰: 기다릴게! */}
+      {/* 수장 늘곰: 본부에서 기다린다! */}
       <div style={{ position: "absolute", left: 540 - 150, top: 610, transform: `scale(${bear}) rotate(${(1 - bear) * -18 + Math.sin(f / 6) * 3}deg)`, transformOrigin: "50% 100%" }}>
         <div
           style={{
             position: "absolute",
             left: 300,
-            top: 120,
+            top: 96,
             padding: "12px 26px",
             borderRadius: 28,
             background: "#FBF5E5",
             color: "#5a3b28",
             fontFamily: FONT.hand,
             fontWeight: 700,
-            fontSize: 50,
+            fontSize: 48,
+            lineHeight: 1.1,
+            textAlign: "center",
             whiteSpace: "nowrap",
             boxShadow: "0 10px 30px rgba(0,0,0,.4)",
           }}
         >
-          기다릴게!
+          본부에서
+          <br />
+          기다린다!
         </div>
         <Img src={staticFile("neulgom/hooray.png")} style={{ height: 420, filter: "drop-shadow(0 16px 30px rgba(0,0,0,.55))" }} />
       </div>
