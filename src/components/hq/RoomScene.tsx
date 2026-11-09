@@ -15,7 +15,7 @@ import Link from "next/link";
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { asset } from "@/lib/asset";
 import { feel, haptic, play } from "@/lib/fx";
-import { getMission, lockState, MISSIONS, SENSE_NAMES } from "@/lib/missions";
+import { D_DAY_KO, getMission, lockState, MISSIONS, SENSE_NAMES } from "@/lib/missions";
 import {
   LAMP_CONE,
   LAMPS,
@@ -1004,7 +1004,7 @@ function InspectCard(props: {
         <p className="font-mono text-[10px] tracking-widest text-fog">EXIT · 탈출 문</p>
         <h3 className="mt-0.5 text-lg font-bold">{endingOpen ? "탈출 문이 열렸다!" : "굳게 잠긴 탈출 문"}</h3>
         <p className="mt-1 text-sm leading-relaxed text-zinc-300">
-          {endingOpen ? "문 너머에서 늘곰의 목소리가 들린다. 늘곰 연구소로 가자." : "모든 작전이 끝나는 날, 본부가 이 문을 연다."}
+          {endingOpen ? "문 너머에서 수장 늘곰이 기다린다. 늘곰 연구소로 가자." : `${D_DAY_KO}, 본부가 이 문을 연다. 그날 모든 요원이 이곳에 모인다.`}
         </p>
         <div className="mt-3 flex gap-2">
           {closeBtn}

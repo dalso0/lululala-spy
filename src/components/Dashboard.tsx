@@ -226,7 +226,7 @@ function DashboardBody({ spy, endingOpen }: { spy: SpyDoc; endingOpen: boolean }
               <img src={asset("/art/stand.webp")} alt="" className="mx-auto h-28" />
               <p className="mt-2 font-mono text-xs text-magenta">INCOMING SIGNAL</p>
               <h2 id="ending-title" className="mt-1 font-hand text-2xl font-bold">
-                “여기는 늘곰… 들리나?”
+                “요원들, 수고했다. 연구소로 오라!”
               </h2>
               <p className="mt-2 text-sm text-zinc-300">늘곰 연구소로 가는 좌표가 열렸어요.</p>
               <div className="mt-4 flex gap-2">
@@ -250,11 +250,11 @@ function DashboardBody({ spy, endingOpen }: { spy: SpyDoc; endingOpen: boolean }
 }
 
 function hqMessage(p: Progress, endingOpen: boolean) {
-  if (endingOpen) return "늘곰 요원의 신호를 잡았다. 연구소로 접속하라!";
+  if (endingOpen) return "수장 늘곰의 호출이다. 연구소로 접속하라!";
   if (p.counted === 0) return "적들의 눈을 속이려면 가장 완벽한 '평범함'으로 위장하라. 첫 지령은 제1구역 평범지령이다.";
   if (p.counted >= p.goal) return "모든 구역 목표 달성! 늘곰 연구소의 문이 열리기를 기다려라.";
-  if (p.ratio < 0.5) return "희미한 신호가 잡히기 시작했다. 계속 진행하라.";
-  return "늘곰 요원의 신호가 가까워지고 있다. 조금만 더!";
+  if (p.ratio < 0.5) return "본부에 색이 돌아오기 시작했다. 계속 진행하라.";
+  return "회색 안개가 걷히고 있다. 수장 늘곰이 지켜보고 있다. 조금만 더!";
 }
 
 /** 목표 칸(구역 목표 합) + 보너스 조각 */

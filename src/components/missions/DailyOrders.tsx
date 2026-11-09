@@ -4,7 +4,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { useSpy } from "@/hooks/useSpy";
-import { DAILY_ORDERS, SOS_FRAGMENTS } from "@/lib/daily";
+import { CIPHER_LINES, DAILY_ORDERS } from "@/lib/daily";
 import { burstAt, feel, haptic, play } from "@/lib/fx";
 import { SENSE_NAMES } from "@/lib/missions";
 import { getSpyStore } from "@/lib/store";
@@ -15,7 +15,7 @@ type Phase =
   | { phase: "reported"; gained: boolean; count: number; fromIndex: number }
   | { phase: "error" };
 
-/** 제1구역 평범지령: 오늘 해낸 평범한 일을 체크해 보고 → 첫 픽셀 + 방화벽 게이지 + 늘곰 SOS 해독 */
+/** 제1구역 평범지령: 오늘 해낸 평범한 일을 체크해 보고 → 첫 픽셀 + 방화벽 게이지 + 수장 늘곰의 암호 지령 해독 */
 export function DailyOrders() {
   const { spy } = useSpy();
   const done = spy.dailyDone;
@@ -34,7 +34,7 @@ export function DailyOrders() {
   }, [state]);
 
   const total = DAILY_ORDERS.length;
-  const decrypted = Math.min(done.length, SOS_FRAGMENTS.length);
+  const decrypted = Math.min(done.length, CIPHER_LINES.length);
   const allDone = done.length >= total;
   const fromIndex = state.phase === "reported" ? state.fromIndex : decrypted;
 
@@ -177,7 +177,7 @@ export function DailyOrders() {
             ) : (
               <>
                 <p className="font-mono text-xs tracking-widest text-magenta">REPORT RECEIVED</p>
-                <p className="mt-1 font-bold">평범지령 {state.count}개 추가 보고 · 늘곰의 SOS 해독 진행</p>
+                <p className="mt-1 font-bold">평범지령 {state.count}개 추가 보고 · 늘곰의 암호 지령 해독 진행</p>
               </>
             )}
             <Link href="/dashboard" className="mt-3 inline-block rounded-lg bg-magenta px-6 py-3 font-bold text-ink">
@@ -187,16 +187,16 @@ export function DailyOrders() {
         )}
       </AnimatePresence>
 
-      {/* 늘곰의 SOS */}
-      <section aria-label="늘곰의 암호화된 SOS" className="rounded-lg border border-line bg-panel/60 p-4">
+      {/* 수장 늘곰의 암호 지령 */}
+      <section aria-label="수장 늘곰의 암호 지령" className="rounded-lg border border-line bg-panel/60 p-4">
         <div className="flex items-baseline justify-between">
-          <h2 className="font-mono text-[11px] tracking-widest text-fog">늘곰의 암호화된 SOS</h2>
+          <h2 className="font-mono text-[11px] tracking-widest text-fog">수장 늘곰의 암호 지령</h2>
           <span className="font-mono text-[11px] text-fog">
-            해독 {decrypted}/{SOS_FRAGMENTS.length}
+            해독 {decrypted}/{CIPHER_LINES.length}
           </span>
         </div>
         <ol className="mt-2 flex flex-col gap-1.5 font-mono text-[13px] leading-relaxed">
-          {SOS_FRAGMENTS.map((line, i) =>
+          {CIPHER_LINES.map((line, i) =>
             i < decrypted ? (
               <li key={i} className={i >= fromIndex ? "text-magenta" : "text-zinc-200"}>
                 {i >= fromIndex ? <Decrypt text={line} delay={(i - fromIndex) * 350} /> : line}
@@ -210,7 +210,7 @@ export function DailyOrders() {
             ),
           )}
         </ol>
-        {allDone && <p className="mt-3 text-sm text-zinc-300">모든 평범지령 완료! 늘곰의 SOS를 끝까지 해독했다.</p>}
+        {allDone && <p className="mt-3 text-sm text-zinc-300">모든 평범지령 완료! 늘곰의 암호 지령을 끝까지 해독했다.</p>}
       </section>
     </main>
   );

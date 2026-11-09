@@ -2,6 +2,9 @@
 
 중학생 대상 오감 힐링 방탈출 웹앱. Next.js(App Router) 정적 내보내기 + Firebase(익명 로그인 · Firestore).
 
+**이야기 설정 (2026-11-09 선생님 결정)**: 늘곰은 본부의 **수장**이다. 학생은 요원이 되어 늘곰의 **지령**을 받는다
+(늘곰을 구출하는 이야기가 아니다). 11.16(월) 요원 소집 → 주차별 작전 → **12.10 D-Day**: 제3구역 벙커가 열리고 모든 요원이 한자리에 모인다.
+
 ## 실행
 
 ```bash
@@ -103,7 +106,7 @@ src/
 │  ├─ HelpCard.tsx               상담 연락처
 │  └─ missions/
 │     ├─ MissionRouter.tsx       미션 ID → 화면, 잠금 검사
-│     ├─ DailyOrders.tsx         제1구역: 평범지령 체크 → 첫 픽셀 · 방화벽 게이지 · 늘곰 SOS 해독
+│     ├─ DailyOrders.tsx         제1구역: 평범지령 체크 → 첫 픽셀 · 방화벽 게이지 · 늘곰의 암호 지령 해독
 │     ├─ BreathingBomb.tsx       미션 1: 스트레스 시한폭탄
 │     └─ MirrorRoom.tsx          미션 2: 진실의 거울 방 (끌어서 버리기 → 암호 새기기 → 거울 깨기)
 ├─ hooks/
@@ -112,7 +115,7 @@ src/
 │  └─ useLive.ts                 게임 설정 · 내 글 · 공개 글 구독
 └─ lib/
    ├─ missions.ts                ★ 미션 목록 · 구역 목표 · 잠금 규칙 · D-Day 날짜
-   ├─ daily.ts                   ★ 평범지령 목록 · 늘곰 SOS 문장
+   ├─ daily.ts                   ★ 평범지령 목록 · 늘곰의 암호 지령 문장
    ├─ room.ts                    ★ 360° 본부 물건 좌표 · 멈춤 자리 · 어떤 미션에 어디가 켜지는지
    ├─ fx/                        소리(sound) · 진동(haptics) · 파티클(particles)
    ├─ codename.ts                요원명 · 복구 코드 만들기

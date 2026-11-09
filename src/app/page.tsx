@@ -12,7 +12,7 @@ import { getSpyStore, RESTORE_MESSAGES, RestoreError } from "@/lib/store";
 const LINES = [
   "> 합천중학교 전역에 회색 안개 감지",
   "> 감염 증상: 하늘색 망각 · 미각 상실 · 잿빛 불안",
-  "> 전설의 요원 '늘곰' 교신 두절",
+  "> 본부 수장 '늘곰', 비밀 지령 발령",
   "> 평범한 스파이 긴급 소집…",
 ];
 
@@ -77,7 +77,7 @@ export default function Landing() {
                 평범한 스파이
               </span>
             </h1>
-            <p className="mt-3 text-sm text-fog">회색 안개 통제 구역 · 늘곰 구출 작전</p>
+            <p className="mt-3 text-sm text-fog">회색 안개 통제 구역 · 수장 늘곰의 비밀 지령</p>
           </header>
 
           {stage === "boot" || stage === "welcomeBack" ? (

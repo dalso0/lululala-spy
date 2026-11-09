@@ -41,8 +41,11 @@ export type Mission = {
   ready: boolean;
 };
 
-/** D-Day 원데이 클래스 날짜 */
-export const D_DAY = "2026-12-15";
+/** D-Day 원데이 클래스 날짜 (모든 요원이 벙커에 모이는 날) */
+export const D_DAY = "2026-12-10";
+/** 화면에 보이는 D-Day: "12/10", "12월 10일" */
+export const D_DAY_MD = `${Number(D_DAY.slice(5, 7))}/${Number(D_DAY.slice(8))}`;
+export const D_DAY_KO = `${Number(D_DAY.slice(5, 7))}월 ${Number(D_DAY.slice(8))}일`;
 
 export const MISSIONS: Mission[] = [
   {
@@ -144,7 +147,7 @@ export const MISSIONS: Mission[] = [
  * 부스는 학생마다 6곳 중 2~3곳만 돌 수 있으므로 2곳이면 구역 완료.
  */
 export const ZONES: Record<Zone, { name: string; goal: number; rule: string }> = {
-  1: { name: "제1구역 · 일상의 위장술", goal: 1, rule: "평범지령 하나만 해도 구역 완료 · 더 할수록 늘곰의 SOS가 풀려요" },
+  1: { name: "제1구역 · 일상의 위장술", goal: 1, rule: "평범지령 하나만 해도 구역 완료 · 더 할수록 늘곰의 암호 지령이 풀려요" },
   2: { name: "제2구역 · 멘탈 시뮬레이션실", goal: 2, rule: "함정 2개를 모두 돌파하면 구역 완료" },
   3: { name: "제3구역 · 감각 탈환 작전", goal: 2, rule: "벙커 6곳 중 2곳만 탈환해도 구역 완료 · 더 들르면 보너스 조각" },
 };

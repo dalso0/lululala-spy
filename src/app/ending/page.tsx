@@ -57,7 +57,7 @@ export default function EndingPage() {
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={asset("/art/hooray.webp")} alt="두 팔을 번쩍 든 늘곰" className="h-44" />
       <h1 className="font-hand text-4xl font-bold">늘곰 연구소</h1>
-      <p className="font-hand text-xl">“고맙다, {spy.codename.split(" #")[0] || "요원"}. 덕분에 돌아왔어.”</p>
+      <p className="font-hand text-xl">“수고했다, {spy.codename.split(" #")[0] || "요원"}. 덕분에 안개가 걷혔다.”</p>
       {myMirror && (
         <p className="text-sm">
           네가 거울에 새긴 암호: <b>“{myMirror.text}”</b>

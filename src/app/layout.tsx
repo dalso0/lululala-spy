@@ -10,7 +10,7 @@ const coding = Nanum_Gothic_Coding({ weight: ["400", "700"], subsets: ["latin"],
 
 export const metadata: Metadata = {
   title: "평범한 스파이",
-  description: "작전명: 회색 안개 통제 구역 — 전설의 요원 늘곰 구출 작전",
+  description: "작전명: 회색 안개 통제 구역 — 수장 늘곰의 지령을 받는 평범한 스파이들",
   robots: { index: false, follow: false },
 };
 

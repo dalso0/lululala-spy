@@ -48,7 +48,7 @@ function MissionCard({ mission, cleared, today }: { mission: Mission; cleared: r
         <p className="mt-0.5 text-xs text-fog">
           {done
             ? mission.id === "m0_daily"
-              ? "해결 완료 · 더 보고하면 늘곰의 SOS가 풀려요"
+              ? "해결 완료 · 더 보고하면 늘곰의 암호 지령이 풀려요"
               : "해결 완료 · 다시 연습할 수 있어요"
             : lock.locked
               ? lock.reason

@@ -16,6 +16,7 @@ import { HelpCard } from "@/components/HelpCard";
 import { useMyPosts } from "@/hooks/useLive";
 import { useSpy } from "@/hooks/useSpy";
 import { burstAt, feel, play } from "@/lib/fx";
+import { D_DAY_MD } from "@/lib/missions";
 import { needsCare } from "@/lib/safety";
 import { getSpyStore, type Post } from "@/lib/store";
 
@@ -567,7 +568,7 @@ function Mirror({
           <div>
             <p className="font-mono text-xs tracking-widest text-magenta">COORDINATES UNLOCKED</p>
             <p className="mt-2 text-lg font-bold">제3구역 · 감각 탈환 작전</p>
-            <p className="font-mono text-sm text-fog">D-Day 12/15 · 오프라인 벙커</p>
+            <p className="font-mono text-sm text-fog">D-Day {D_DAY_MD} · 오프라인 벙커</p>
           </div>
         </motion.div>
       )}
